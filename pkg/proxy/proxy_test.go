@@ -390,6 +390,121 @@ func TestProxyRouter_AuthorizationHeaderDefaultBehavior(t *testing.T) {
 	})
 }
 
+func TestProxyRouter_HeaderMappingStripsClientHeaders(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	cases := []struct {
+		name              string
+		headerMapping     map[string]string
+		headerMappingBase string
+		claims            jwt.MapClaims
+		clientHeaders     map[string]string
+		expectedHeaders   map[string]string
+		missingHeaders    []string
+	}{
+		{
+			name:              "claim missing strips client header",
+			headerMapping:     map[string]string{"/groups": "X-Forwarded-Groups"},
+			headerMappingBase: "/userinfo",
+			claims: jwt.MapClaims{
+				"sub":      "test-user",
+				"userinfo": map[string]any{"email": "user@example.com"},
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+			},
+			clientHeaders:  map[string]string{"X-Forwarded-Groups": "admin"},
+			missingHeaders: []string{"X-Forwarded-Groups"},
+		},
+		{
+			name:              "claim present overwrites client header",
+			headerMapping:     map[string]string{"/email": "X-Forwarded-Email"},
+			headerMappingBase: "/userinfo",
+			claims: jwt.MapClaims{
+				"sub":      "test-user",
+				"userinfo": map[string]any{"email": "user@example.com"},
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+			},
+			clientHeaders: map[string]string{"X-Forwarded-Email": "attacker@example.com"},
+			expectedHeaders: map[string]string{
+				"X-Forwarded-Email": "user@example.com",
+			},
+		},
+		{
+			name:              "base path absent strips client header",
+			headerMapping:     map[string]string{"/email": "X-Forwarded-Email"},
+			headerMappingBase: "/userinfo",
+			claims: jwt.MapClaims{
+				"sub": "test-user",
+				"exp": time.Now().Add(time.Hour).Unix(),
+				"iat": time.Now().Unix(),
+			},
+			clientHeaders:  map[string]string{"X-Forwarded-Email": "attacker@example.com"},
+			missingHeaders: []string{"X-Forwarded-Email"},
+		},
+		{
+			name:              "mixed mappings only set claims that exist",
+			headerMapping:     map[string]string{"/email": "X-Forwarded-Email", "/groups": "X-Forwarded-Groups"},
+			headerMappingBase: "/",
+			claims: jwt.MapClaims{
+				"sub":   "test-user",
+				"email": "user@example.com",
+				"exp":   time.Now().Add(time.Hour).Unix(),
+				"iat":   time.Now().Unix(),
+			},
+			clientHeaders: map[string]string{
+				"X-Forwarded-Email":  "attacker@example.com",
+				"X-Forwarded-Groups": "admin",
+			},
+			expectedHeaders: map[string]string{
+				"X-Forwarded-Email": "user@example.com",
+			},
+			missingHeaders: []string{"X-Forwarded-Groups"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			receivedHeaders := http.Header{}
+			proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range r.Header {
+					receivedHeaders[k] = v
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+
+			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, tt.headerMappingBase)
+			require.NoError(t, err)
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			proxyRouter.SetupRoutes(router)
+
+			token, err := createJWT(privateKey, tt.claims)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest("GET", "/test", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+token)
+			for k, v := range tt.clientHeaders {
+				req.Header.Set(k, v)
+			}
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			for header, expected := range tt.expectedHeaders {
+				assert.Equal(t, expected, receivedHeaders.Get(header), "header %s mismatch", header)
+			}
+			for _, header := range tt.missingHeaders {
+				assert.Empty(t, receivedHeaders.Get(header), "header %s should be stripped", header)
+			}
+		})
+	}
+}
+
 func TestProxyRouter_ProtectedResourceTrailingSlash(t *testing.T) {
 	_, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)

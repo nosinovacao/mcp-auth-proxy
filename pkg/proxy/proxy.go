@@ -93,6 +93,9 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 	if !p.forwardAuthorizationHeader {
 		c.Request.Header.Del("Authorization")
 	}
+	for _, headerName := range p.headerMapping {
+		c.Request.Header.Del(headerName)
+	}
 	for key, values := range p.proxyHeaders {
 		if strings.EqualFold(key, "Authorization") {
 			c.Request.Header.Del("Authorization")
