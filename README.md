@@ -90,7 +90,14 @@ For sovereign clouds, override the Graph API endpoint:
 --oidc-graph-api-endpoint "https://graph.microsoft.us"
 ```
 
-If Graph API is unreachable or returns an error, access is denied (fail closed).
+**Authorization semantics:** `--oidc-allowed-groups` adds group membership as an
+additional allow path. It is combined with `--oidc-allowed-users`,
+`--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and
+`--oidc-allowed-attributes-glob` via OR — a user is allowed if they match any
+one of those filters. If the Graph lookup is reached (i.e., none of the
+earlier filters already allowed the user) and Graph API is unreachable or
+returns an error, that check denies access (fail closed). Users already
+authorized by the earlier filters are not affected by a Graph outage.
 
 ## Verified MCP Client
 
