@@ -298,8 +298,13 @@ func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("Graph API returned %d: %s", resp.StatusCode, string(respBody))
+		const maxGraphAPIErrorBodyBytes = 4096
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxGraphAPIErrorBodyBytes+1))
+		respBodyText := string(respBody)
+		if len(respBody) > maxGraphAPIErrorBodyBytes {
+			respBodyText = string(respBody[:maxGraphAPIErrorBodyBytes]) + "... (truncated)"
+		}
+		return false, fmt.Errorf("Graph API returned %d: %s", resp.StatusCode, respBodyText)
 	}
 
 	var result struct {
