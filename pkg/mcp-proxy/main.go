@@ -68,6 +68,8 @@ func Run(
 	oidcAllowedUsersGlob []string,
 	oidcAllowedAttributes map[string][]string,
 	oidcAllowedAttributesGlob map[string][]string,
+	oidcAllowedGroups []string,
+	oidcGraphAPIEndpoint string,
 	noProviderAutoSelect bool,
 	password string,
 	passwordHash string,
@@ -264,6 +266,8 @@ func Run(
 			oidcAllowedUsersGlob,
 			oidcAllowedAttributes,
 			oidcAllowedAttributesGlob,
+			oidcAllowedGroups,
+			oidcGraphAPIEndpoint,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create OIDC provider: %w", err)
