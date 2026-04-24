@@ -307,9 +307,9 @@ func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[
 }
 
 // graphUserID returns the Azure AD object ID to use for Graph lookups,
-// preferring /oid and falling back to /sub. The claim must be a non-empty
-// string — other types (null, number, object) are treated as invalid to
-// avoid looking up bogus users like "<nil>".
+// preferring /oid and falling back to /sub. A claim that is missing,
+// non-string, or an empty string is skipped so that a present-but-invalid
+// /oid (e.g. null) doesn't block a usable /sub from being tried.
 func graphUserID(userInfoMap map[string]any) (string, error) {
 	for _, pointer := range []string{"/oid", "/sub"} {
 		v, err := jsonpointer.Get(userInfoMap, pointer)
@@ -317,11 +317,8 @@ func graphUserID(userInfoMap map[string]any) (string, error) {
 			continue
 		}
 		s, ok := v.(string)
-		if !ok {
-			return "", fmt.Errorf("userinfo claim %s must be a non-empty string", pointer)
-		}
-		if s == "" {
-			return "", fmt.Errorf("userinfo claim %s must be a non-empty string", pointer)
+		if !ok || s == "" {
+			continue
 		}
 		return s, nil
 	}

@@ -56,10 +56,29 @@ func TestCheckGraphAPIGroups_Allowed(t *testing.T) {
 func TestCheckGraphAPIGroups_NonStringOID(t *testing.T) {
 	p := newGraphProvider(t, "http://unused", []string{"group-1"})
 	// Azure AD token endpoints can return nulls or unexpected types for
-	// claims; we must not stringify them into a bogus user lookup.
+	// claims; with no usable oid/sub we must not stringify them into a
+	// bogus user lookup.
 	allowed, err := p.checkGraphAPIGroups(context.Background(), map[string]any{"oid": nil})
 	require.Error(t, err)
 	require.False(t, allowed)
+}
+
+func TestCheckGraphAPIGroups_InvalidOIDFallsBackToSub(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"value":["group-1"]}`))
+	}))
+	defer srv.Close()
+
+	p := newGraphProvider(t, srv.URL, []string{"group-1"})
+	// A present-but-invalid /oid (null) must not mask a usable /sub.
+	userInfo := map[string]any{"oid": nil, "sub": "user-sub-789"}
+
+	allowed, err := p.checkGraphAPIGroups(context.Background(), userInfo)
+	require.NoError(t, err)
+	require.True(t, allowed)
+	require.Equal(t, "/v1.0/users/user-sub-789/checkMemberGroups", gotPath)
 }
 
 func TestCheckGraphAPIGroups_Denied(t *testing.T) {
