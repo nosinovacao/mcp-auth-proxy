@@ -109,8 +109,11 @@ func NewOIDCProvider(
 
 	if len(allowedGroups) > 0 {
 		normalizedEndpoint := strings.TrimRight(graphAPIEndpoint, "/")
-		if _, err := url.Parse(normalizedEndpoint); err != nil || normalizedEndpoint == "" {
-			return nil, fmt.Errorf("invalid graph API endpoint %q: must be a non-empty URL when allowed groups are configured", graphAPIEndpoint)
+		parsedEndpoint, err := url.Parse(normalizedEndpoint)
+		if normalizedEndpoint == "" || err != nil || !parsedEndpoint.IsAbs() ||
+			parsedEndpoint.Host == "" ||
+			(parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") {
+			return nil, fmt.Errorf("invalid graph API endpoint %q: must be an absolute http(s) URL with a host when allowed groups are configured", graphAPIEndpoint)
 		}
 		// Bound token-endpoint HTTP calls so a stalled IdP can't wedge the
 		// auth flow. The TokenSource caches tokens across requests, so this
@@ -251,14 +254,9 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 }
 
 func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[string]any) (bool, error) {
-	oid := ""
-	if v, err := jsonpointer.Get(userInfoMap, "/oid"); err == nil {
-		oid = fmt.Sprintf("%v", v)
-	} else if v, err := jsonpointer.Get(userInfoMap, "/sub"); err == nil {
-		oid = fmt.Sprintf("%v", v)
-	}
-	if oid == "" {
-		return false, errors.New("user object ID (oid/sub) not found in userinfo")
+	oid, err := graphUserID(userInfoMap)
+	if err != nil {
+		return false, err
 	}
 
 	token, err := p.graphTokenSource.Token()
@@ -306,6 +304,28 @@ func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[
 	}
 
 	return len(result.Value) > 0, nil
+}
+
+// graphUserID returns the Azure AD object ID to use for Graph lookups,
+// preferring /oid and falling back to /sub. The claim must be a non-empty
+// string — other types (null, number, object) are treated as invalid to
+// avoid looking up bogus users like "<nil>".
+func graphUserID(userInfoMap map[string]any) (string, error) {
+	for _, pointer := range []string{"/oid", "/sub"} {
+		v, err := jsonpointer.Get(userInfoMap, pointer)
+		if err != nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return "", fmt.Errorf("userinfo claim %s must be a non-empty string", pointer)
+		}
+		if s == "" {
+			return "", fmt.Errorf("userinfo claim %s must be a non-empty string", pointer)
+		}
+		return s, nil
+	}
+	return "", errors.New("user object ID (oid/sub) not found in userinfo")
 }
 
 // matchAttributeValue checks if an attribute value matches any of the allowed values.
