@@ -1,18 +1,23 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gobwas/glob"
 	"github.com/mattn/go-jsonpointer"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 type oidcProvider struct {
@@ -24,12 +29,17 @@ type oidcProvider struct {
 	allowedUsersGlob      []glob.Glob
 	allowedAttributes     map[string][]string
 	allowedAttributesGlob map[string][]glob.Glob
+	allowedGroups         []string
+	graphAPIEndpoint      string
+	graphTokenSource      oauth2.TokenSource
+	graphHTTPClient       *http.Client
 }
 
 func NewOIDCProvider(
 	configurationURL string, scopes []string, userIDField string,
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
+	allowedGroups []string, graphAPIEndpoint string,
 ) (Provider, error) {
 	resp, err := http.Get(configurationURL)
 	if err != nil {
@@ -78,7 +88,7 @@ func NewOIDCProvider(
 		}
 	}
 
-	return &oidcProvider{
+	p := &oidcProvider{
 		oauth2: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -96,7 +106,22 @@ func NewOIDCProvider(
 		allowedUsersGlob:      compiledGlobs,
 		allowedAttributes:     allowedAttributes,
 		allowedAttributesGlob: compiledAttributeGlobs,
-	}, nil
+	}
+
+	if len(allowedGroups) > 0 {
+		ccConfig := clientcredentials.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			TokenURL:     cfg.TokenEndpoint,
+			Scopes:       []string{graphAPIEndpoint + "/.default"},
+		}
+		p.graphTokenSource = ccConfig.TokenSource(context.Background())
+		p.allowedGroups = allowedGroups
+		p.graphAPIEndpoint = graphAPIEndpoint
+		p.graphHTTPClient = http.DefaultClient
+	}
+
+	return p, nil
 }
 
 func (p *oidcProvider) Name() string {
@@ -160,7 +185,9 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 	}
 
 	// If no restrictions are set, allow all users
-	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 && len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 {
+	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 &&
+		len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 &&
+		len(p.allowedGroups) == 0 {
 		return true, userID, userInfoMap, nil
 	}
 
@@ -198,7 +225,77 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 		}
 	}
 
+	// Graph API group membership check
+	if len(p.allowedGroups) > 0 {
+		allowed, err := p.checkGraphAPIGroups(ctx, userInfoMap)
+		if err != nil {
+			zap.L().Error("Graph API group check failed", zap.Error(err))
+			return false, userID, userInfoMap, nil // fail closed
+		}
+		if allowed {
+			return true, userID, userInfoMap, nil
+		}
+	}
+
 	return false, userID, userInfoMap, nil
+}
+
+func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[string]any) (bool, error) {
+	oid := ""
+	if v, err := jsonpointer.Get(userInfoMap, "/oid"); err == nil {
+		oid = fmt.Sprintf("%v", v)
+	} else if v, err := jsonpointer.Get(userInfoMap, "/sub"); err == nil {
+		oid = fmt.Sprintf("%v", v)
+	}
+	if oid == "" {
+		return false, errors.New("user object ID (oid/sub) not found in userinfo")
+	}
+
+	token, err := p.graphTokenSource.Token()
+	if err != nil {
+		return false, fmt.Errorf("failed to get Graph API token: %w", err)
+	}
+
+	reqBody := map[string]any{"groupIds": p.allowedGroups}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/v1.0/users/%s/checkMemberGroups", p.graphAPIEndpoint, oid)
+	httpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(httpCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := p.graphHTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("Graph API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("Graph API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Value []string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("failed to decode Graph API response: %w", err)
+	}
+
+	return len(result.Value) > 0, nil
 }
 
 // matchAttributeValue checks if an attribute value matches any of the allowed values.
