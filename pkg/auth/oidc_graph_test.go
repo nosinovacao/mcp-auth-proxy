@@ -27,11 +27,13 @@ func TestCheckGraphAPIGroups_Allowed(t *testing.T) {
 	var gotBody map[string]any
 	var gotAuth string
 	var gotPath string
+	var readErr, unmarshalErr error
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &gotBody)
+		var body []byte
+		body, readErr = io.ReadAll(r.Body)
+		unmarshalErr = json.Unmarshal(body, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"value":["group-1"]}`))
@@ -43,10 +45,21 @@ func TestCheckGraphAPIGroups_Allowed(t *testing.T) {
 
 	allowed, err := p.checkGraphAPIGroups(context.Background(), userInfo)
 	require.NoError(t, err)
+	require.NoError(t, readErr)
+	require.NoError(t, unmarshalErr)
 	require.True(t, allowed)
 	require.Equal(t, "Bearer test-token", gotAuth)
 	require.Equal(t, "/v1.0/users/user-oid-123/checkMemberGroups", gotPath)
 	require.ElementsMatch(t, []any{"group-1", "group-2"}, gotBody["groupIds"])
+}
+
+func TestCheckGraphAPIGroups_NonStringOID(t *testing.T) {
+	p := newGraphProvider(t, "http://unused", []string{"group-1"})
+	// Azure AD token endpoints can return nulls or unexpected types for
+	// claims; we must not stringify them into a bogus user lookup.
+	allowed, err := p.checkGraphAPIGroups(context.Background(), map[string]any{"oid": nil})
+	require.Error(t, err)
+	require.False(t, allowed)
 }
 
 func TestCheckGraphAPIGroups_Denied(t *testing.T) {
