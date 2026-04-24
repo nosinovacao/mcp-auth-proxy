@@ -270,6 +270,7 @@ func Run(
 			oidcAllowedAttributesGlob,
 			oidcAllowedGroups,
 			oidcGraphAPIEndpoint,
+			logger,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create OIDC provider: %w", err)
