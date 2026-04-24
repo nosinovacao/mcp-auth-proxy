@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,13 +34,14 @@ type oidcProvider struct {
 	graphAPIEndpoint      string
 	graphTokenSource      oauth2.TokenSource
 	graphHTTPClient       *http.Client
+	graphLogger           *zap.Logger
 }
 
 func NewOIDCProvider(
 	configurationURL string, scopes []string, userIDField string,
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
-	allowedGroups []string, graphAPIEndpoint string,
+	allowedGroups []string, graphAPIEndpoint string, logger *zap.Logger,
 ) (Provider, error) {
 	resp, err := http.Get(configurationURL)
 	if err != nil {
@@ -109,16 +111,30 @@ func NewOIDCProvider(
 	}
 
 	if len(allowedGroups) > 0 {
+		normalizedEndpoint := strings.TrimRight(graphAPIEndpoint, "/")
+		if _, err := url.Parse(normalizedEndpoint); err != nil || normalizedEndpoint == "" {
+			return nil, fmt.Errorf("invalid graph API endpoint %q: must be a non-empty URL when allowed groups are configured", graphAPIEndpoint)
+		}
+		// Bound token-endpoint HTTP calls so a stalled IdP can't wedge the
+		// auth flow. The TokenSource caches tokens across requests, so this
+		// only trips on initial fetch or refresh.
+		tokenHTTPClient := &http.Client{Timeout: 10 * time.Second}
+		tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
 		ccConfig := clientcredentials.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			TokenURL:     cfg.TokenEndpoint,
-			Scopes:       []string{graphAPIEndpoint + "/.default"},
+			Scopes:       []string{normalizedEndpoint + "/.default"},
 		}
-		p.graphTokenSource = ccConfig.TokenSource(context.Background())
+		p.graphTokenSource = ccConfig.TokenSource(tokenCtx)
 		p.allowedGroups = allowedGroups
-		p.graphAPIEndpoint = graphAPIEndpoint
+		p.graphAPIEndpoint = normalizedEndpoint
 		p.graphHTTPClient = http.DefaultClient
+		if logger != nil {
+			p.graphLogger = logger
+		} else {
+			p.graphLogger = zap.NewNop()
+		}
 	}
 
 	return p, nil
@@ -229,7 +245,7 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 	if len(p.allowedGroups) > 0 {
 		allowed, err := p.checkGraphAPIGroups(ctx, userInfoMap)
 		if err != nil {
-			zap.L().Error("Graph API group check failed", zap.Error(err))
+			p.graphLogger.Error("Graph API group check failed", zap.Error(err))
 			return false, userID, userInfoMap, nil // fail closed
 		}
 		if allowed {
@@ -262,7 +278,7 @@ func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[
 		return false, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("%s/v1.0/users/%s/checkMemberGroups", p.graphAPIEndpoint, oid)
+	endpoint := fmt.Sprintf("%s/v1.0/users/%s/checkMemberGroups", p.graphAPIEndpoint, url.PathEscape(oid))
 	httpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 

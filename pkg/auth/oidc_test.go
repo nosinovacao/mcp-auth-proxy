@@ -50,6 +50,7 @@ func setupOIDCTest(allowedUsers []string, userIDField string) (Provider, gin.IRo
 		nil,
 		nil,
 		"",
+		nil,
 	)
 	if err != nil {
 		panic(err)
@@ -192,6 +193,7 @@ func TestOIDCProviderErrors(t *testing.T) {
 			nil,
 			nil,
 			"",
+			nil,
 		)
 		require.Error(t, err)
 	})
@@ -218,6 +220,7 @@ func TestOIDCProviderErrors(t *testing.T) {
 			nil,
 			nil,
 			"",
+			nil,
 		)
 		require.Error(t, err)
 	})
@@ -316,6 +319,7 @@ func TestOIDCProviderGlobPatterns(t *testing.T) {
 		nil,
 		nil,
 		"",
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -469,6 +473,7 @@ func TestOIDCProviderAttributeMatching(t *testing.T) {
 				tc.allowedAttributesGlob,
 				nil,
 				"",
+				nil,
 			)
 			require.NoError(t, err)
 
