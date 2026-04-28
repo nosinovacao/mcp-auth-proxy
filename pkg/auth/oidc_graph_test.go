@@ -13,13 +13,13 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func newGraphProvider(t *testing.T, endpoint string, allowedGroups []string) *oidcProvider {
+func newGraphProvider(t *testing.T, endpoint string, entraIDAllowedGroups []string) *oidcProvider {
 	t.Helper()
 	return &oidcProvider{
-		allowedGroups:    allowedGroups,
-		graphAPIEndpoint: endpoint,
-		graphTokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}),
-		graphHTTPClient:  http.DefaultClient,
+		entraIDAllowedGroups:    entraIDAllowedGroups,
+		entraIDGraphAPIEndpoint: endpoint,
+		graphTokenSource:        oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}),
+		graphHTTPClient:         http.DefaultClient,
 	}
 }
 
@@ -137,9 +137,10 @@ func TestCheckGraphAPIGroups_FallsBackToSub(t *testing.T) {
 }
 
 func TestAuthorization_GraphAPIDisabled(t *testing.T) {
-	// When allowedGroups is empty, the Graph API check must be skipped
-	// entirely — even if the user would otherwise be denied, no outbound
-	// request is made. A nil graphTokenSource would panic if called.
+	// When entraIDAllowedGroups is empty, the Graph API check must be
+	// skipped entirely — even if the user would otherwise be denied, no
+	// outbound request is made. A nil graphTokenSource would panic if
+	// called.
 	p, _, userinfo, tsConfig := setupOIDCTest([]string{"other@example.com"}, "/email")
 	defer tsConfig.Close()
 
@@ -148,7 +149,7 @@ func TestAuthorization_GraphAPIDisabled(t *testing.T) {
 	})
 
 	op := p.(*oidcProvider)
-	require.Empty(t, op.allowedGroups)
+	require.Empty(t, op.entraIDAllowedGroups)
 	require.Nil(t, op.graphTokenSource)
 
 	allowed, _, _, err := p.Authorization(context.Background(), &oauth2.Token{AccessToken: "t"})

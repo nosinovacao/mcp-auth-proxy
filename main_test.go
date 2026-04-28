@@ -429,8 +429,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		oidcAllowedGroups []string,
-		oidcGraphAPIEndpoint string,
+		entraIDAllowedGroups []string,
+		entraIDGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -499,8 +499,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		oidcAllowedGroups []string,
-		oidcGraphAPIEndpoint string,
+		entraIDAllowedGroups []string,
+		entraIDGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -565,8 +565,8 @@ func TestNewRootCommand_ForwardAuthorizationFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		oidcAllowedGroups []string,
-		oidcGraphAPIEndpoint string,
+		entraIDAllowedGroups []string,
+		entraIDGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -631,8 +631,8 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		oidcAllowedGroups []string,
-		oidcGraphAPIEndpoint string,
+		entraIDAllowedGroups []string,
+		entraIDGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -661,7 +661,7 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 	}
 }
 
-func captureOIDCGroupsRunner(outGroups *[]string, outEndpoint *string) proxyRunnerFunc {
+func captureEntraIDGroupsRunner(outGroups *[]string, outEndpoint *string) proxyRunnerFunc {
 	return proxyRunnerFunc(func(listen string,
 		tlsListen string,
 		autoTLS bool,
@@ -692,8 +692,8 @@ func captureOIDCGroupsRunner(outGroups *[]string, outEndpoint *string) proxyRunn
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		oidcAllowedGroups []string,
-		oidcGraphAPIEndpoint string,
+		entraIDAllowedGroups []string,
+		entraIDGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -706,24 +706,24 @@ func captureOIDCGroupsRunner(outGroups *[]string, outEndpoint *string) proxyRunn
 		headerMapping map[string]string,
 		headerMappingBase string,
 	) error {
-		*outGroups = oidcAllowedGroups
-		*outEndpoint = oidcGraphAPIEndpoint
+		*outGroups = entraIDAllowedGroups
+		*outEndpoint = entraIDGraphAPIEndpoint
 		return nil
 	})
 }
 
-func TestNewRootCommand_OIDCAllowedGroupsFlag(t *testing.T) {
-	t.Setenv("OIDC_ALLOWED_GROUPS", "")
-	t.Setenv("OIDC_GRAPH_API_ENDPOINT", "")
+func TestNewRootCommand_EntraIDAllowedGroupsFlag(t *testing.T) {
+	t.Setenv("ENTRAID_ALLOWED_GROUPS", "")
+	t.Setenv("ENTRAID_GRAPH_API_ENDPOINT", "")
 
 	var gotGroups []string
 	var gotEndpoint string
-	cmd := newRootCommand(captureOIDCGroupsRunner(&gotGroups, &gotEndpoint))
+	cmd := newRootCommand(captureEntraIDGroupsRunner(&gotGroups, &gotEndpoint))
 	// Trailing comma + surrounding whitespace must be dropped; sovereign
 	// cloud endpoint override must flow through.
 	cmd.SetArgs([]string{
-		"--oidc-allowed-groups", " group-1 , ,group-2,",
-		"--oidc-graph-api-endpoint", "https://graph.microsoft.us",
+		"--entraid-allowed-groups", " group-1 , ,group-2,",
+		"--entraid-graph-api-endpoint", "https://graph.microsoft.us",
 		"http://backend",
 	})
 
@@ -740,13 +740,13 @@ func TestNewRootCommand_OIDCAllowedGroupsFlag(t *testing.T) {
 	}
 }
 
-func TestNewRootCommand_OIDCAllowedGroupsFromEnv(t *testing.T) {
-	t.Setenv("OIDC_ALLOWED_GROUPS", "env-group-1,env-group-2")
-	t.Setenv("OIDC_GRAPH_API_ENDPOINT", "")
+func TestNewRootCommand_EntraIDAllowedGroupsFromEnv(t *testing.T) {
+	t.Setenv("ENTRAID_ALLOWED_GROUPS", "env-group-1,env-group-2")
+	t.Setenv("ENTRAID_GRAPH_API_ENDPOINT", "")
 
 	var gotGroups []string
 	var gotEndpoint string
-	cmd := newRootCommand(captureOIDCGroupsRunner(&gotGroups, &gotEndpoint))
+	cmd := newRootCommand(captureEntraIDGroupsRunner(&gotGroups, &gotEndpoint))
 	cmd.SetArgs([]string{"http://backend"})
 
 	if err := cmd.Execute(); err != nil {
