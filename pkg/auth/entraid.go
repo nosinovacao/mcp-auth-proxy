@@ -48,13 +48,17 @@ func NewEntraIDGroupResolver(
 	if cfg == nil || len(cfg.AllowedGroups) == 0 {
 		return nil, nil
 	}
-	normalizedEndpoint := strings.TrimRight(cfg.GraphAPIEndpoint, "/")
-	parsedEndpoint, err := url.Parse(normalizedEndpoint)
-	if normalizedEndpoint == "" || err != nil || !parsedEndpoint.IsAbs() ||
+	trimmedEndpoint := strings.TrimSpace(cfg.GraphAPIEndpoint)
+	parsedEndpoint, err := url.Parse(trimmedEndpoint)
+	if trimmedEndpoint == "" || err != nil || !parsedEndpoint.IsAbs() ||
 		parsedEndpoint.Host == "" ||
-		(parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") {
-		return nil, fmt.Errorf("invalid graph API endpoint %q: must be an absolute http(s) URL with a host when allowed groups are configured", cfg.GraphAPIEndpoint)
+		(parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") ||
+		(parsedEndpoint.Path != "" && parsedEndpoint.Path != "/") ||
+		parsedEndpoint.RawQuery != "" ||
+		parsedEndpoint.Fragment != "" {
+		return nil, fmt.Errorf("invalid graph API endpoint %q: must be an absolute http(s) base URL with a host and no path, query, or fragment when allowed groups are configured", cfg.GraphAPIEndpoint)
 	}
+	normalizedEndpoint := parsedEndpoint.Scheme + "://" + parsedEndpoint.Host
 	// Bound token-endpoint HTTP calls so a stalled IdP can't wedge the
 	// auth flow. The TokenSource caches tokens across requests, so this
 	// only trips on initial fetch or refresh.
