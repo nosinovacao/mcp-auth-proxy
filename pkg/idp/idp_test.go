@@ -52,10 +52,12 @@ func setupTestServer(t *testing.T) (*httptest.Server, repository.Repository, str
 	store := cookie.NewStore(secret[:])
 	router.Use(sessions.Sessions("test_session", store))
 
-	// Mock auth middleware that always passes
+	// Mock auth middleware that always passes with user identity
 	router.Use(func(c *gin.Context) {
 		session := sessions.Default(c)
 		session.Set(auth.SessionKeyAuthorized, true)
+		session.Set(auth.SessionKeyUserID, "test-user@example.com")
+		session.Set(auth.SessionKeyUserInfo, `{"email":"test-user@example.com","name":"Test User"}`)
 		err := session.Save()
 		if err != nil {
 			c.JSON(500, gin.H{"error": "Failed to save session"})
@@ -465,4 +467,63 @@ func TestAccessTokenAudienceClaim(t *testing.T) {
 	aud, ok := claims["aud"].([]any)
 	require.True(t, ok, "aud claim should be present as an array")
 	require.Contains(t, aud, "http://localhost:8080", "aud should contain the external URL")
+}
+
+func TestAccessTokenPreservesUserIdentity(t *testing.T) {
+	server, _, _ := setupTestServer(t)
+	regResp := registerTestClient(t, server.URL)
+
+	config := &oauth2.Config{
+		ClientID:     regResp.ClientID,
+		ClientSecret: regResp.ClientSecret,
+		RedirectURL:  "http://localhost:8080/callback",
+		Scopes:       []string{},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  server.URL + AuthorizationEndpoint,
+			TokenURL: server.URL + TokenEndpoint,
+		},
+	}
+
+	callbackURL := testAuthFlowWithURL(t, server.URL, config.AuthCodeURL("test-state"))
+	code := callbackURL.Query().Get("code")
+
+	tokenReq := url.Values{}
+	tokenReq.Set("grant_type", "authorization_code")
+	tokenReq.Set("code", code)
+	tokenReq.Set("redirect_uri", "http://localhost:8080/callback")
+	tokenReq.Set("client_id", regResp.ClientID)
+	tokenReq.Set("client_secret", regResp.ClientSecret)
+
+	tokenResp, err := http.PostForm(server.URL+TokenEndpoint, tokenReq)
+	require.NoError(t, err)
+	defer tokenResp.Body.Close()
+	require.Equal(t, http.StatusOK, tokenResp.StatusCode)
+
+	var tokenResult map[string]any
+	err = json.NewDecoder(tokenResp.Body).Decode(&tokenResult)
+	require.NoError(t, err)
+
+	accessToken := tokenResult["access_token"].(string)
+
+	// Decode JWT payload
+	parts := strings.Split(accessToken, ".")
+	require.Len(t, parts, 3)
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var claims map[string]any
+	err = json.Unmarshal(payload, &claims)
+	require.NoError(t, err)
+
+	// Verify sub claim is preserved
+	sub, ok := claims["sub"].(string)
+	require.True(t, ok, "sub claim should be present")
+	require.Equal(t, "test-user@example.com", sub)
+
+	// Verify userinfo claim is preserved
+	userinfo, ok := claims["userinfo"].(map[string]any)
+	require.True(t, ok, "userinfo claim should be present")
+	require.Equal(t, "test-user@example.com", userinfo["email"])
+	require.Equal(t, "Test User", userinfo["name"])
 }

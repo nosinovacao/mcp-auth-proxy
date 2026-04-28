@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"net/url"
 	"time"
 
@@ -17,6 +18,7 @@ type Request struct {
 	RequestedAudience []string
 	GrantedAudience   []string
 	RotatedAt         time.Time
+	SessionData       json.RawMessage `json:",omitempty"`
 }
 
 type Client struct {
@@ -43,7 +45,7 @@ type AuthorizeRequest struct {
 
 func FromFositeReq(reqester fosite.Requester) *Request {
 	req := reqester.(*fosite.Request)
-	return &Request{
+	r := &Request{
 		ID:                req.ID,
 		RequestedAt:       req.RequestedAt,
 		Client:            FromFositeClient(req.Client),
@@ -53,6 +55,12 @@ func FromFositeReq(reqester fosite.Requester) *Request {
 		RequestedAudience: req.RequestedAudience,
 		GrantedAudience:   req.GrantedAudience,
 	}
+	if sess := req.GetSession(); sess != nil {
+		if data, err := json.Marshal(sess); err == nil {
+			r.SessionData = data
+		}
+	}
+	return r
 }
 
 func (r *Request) ToFositeReq() *fosite.Request {
