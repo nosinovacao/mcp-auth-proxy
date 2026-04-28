@@ -254,6 +254,11 @@ func Run(
 
 	// Add OIDC provider if configured
 	if oidcConfigurationURL != "" && oidcClientID != "" && oidcClientSecret != "" {
+		entraIDConfig := &auth.EntraIDGroupResolverConfig{
+			AllowedGroups:    entraIDAllowedGroups,
+			GraphAPIEndpoint: entraIDGraphAPIEndpoint,
+			Logger:           logger,
+		}
 		oidcProvider, err := auth.NewOIDCProvider(
 			oidcConfigurationURL,
 			oidcScopes,
@@ -266,9 +271,7 @@ func Run(
 			oidcAllowedUsersGlob,
 			oidcAllowedAttributes,
 			oidcAllowedAttributesGlob,
-			entraIDAllowedGroups,
-			entraIDGraphAPIEndpoint,
-			logger,
+			entraIDConfig,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create OIDC provider: %w", err)
