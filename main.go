@@ -375,6 +375,10 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&githubAllowedUsers, "github-allowed-users", getEnvWithDefault("GITHUB_ALLOWED_USERS", ""), "Comma-separated list of allowed GitHub users (usernames)")
 	rootCmd.Flags().StringVar(&githubAllowedOrgs, "github-allowed-orgs", getEnvWithDefault("GITHUB_ALLOWED_ORGS", ""), "Comma-separated list of allowed GitHub organizations. You can also restrict access to specific teams using the format `Org:Team`")
 
+	// Entra ID / Microsoft Graph configuration
+	rootCmd.Flags().StringVar(&entraIDAllowedGroups, "entraid-allowed-groups", getEnvWithDefault("ENTRAID_ALLOWED_GROUPS", ""), "Comma-separated Microsoft Entra ID group object IDs. Requires the --oidc-* flags to be configured against an Entra tenant; reuses the OIDC client credentials. If set, adds membership in any of these groups as an additional allow path (combined with --oidc-allowed-users/--oidc-allowed-users-glob/--oidc-allowed-attributes/--oidc-allowed-attributes-glob via OR). Membership is checked via the Microsoft Graph API.")
+	rootCmd.Flags().StringVar(&entraIDGraphAPIEndpoint, "entraid-graph-api-endpoint", getEnvWithDefault("ENTRAID_GRAPH_API_ENDPOINT", "https://graph.microsoft.com"), "Microsoft Graph API base URL used by --entraid-allowed-groups. Override for sovereign clouds (e.g., https://graph.microsoft.us).")
+
 	// OIDC configuration
 	rootCmd.Flags().StringVar(&oidcConfigurationURL, "oidc-configuration-url", getEnvWithDefault("OIDC_CONFIGURATION_URL", ""), "OIDC configuration URL")
 	rootCmd.Flags().StringVar(&oidcClientID, "oidc-client-id", getEnvWithDefault("OIDC_CLIENT_ID", ""), "OIDC client ID")
@@ -386,8 +390,6 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&oidcAllowedUsersGlob, "oidc-allowed-users-glob", getEnvWithDefault("OIDC_ALLOWED_USERS_GLOB", ""), "Comma-separated list of glob patterns for allowed OIDC users")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributes, "oidc-allowed-attributes", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES", ""), "Comma-separated list of allowed attribute key=value pairs (e.g., /groups=admin,/roles=editor). Keys are JSON pointers.")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributesGlob, "oidc-allowed-attributes-glob", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES_GLOB", ""), "Comma-separated list of attribute key=pattern pairs for glob matching (e.g., /groups=*-admins,/email=*@example.com). Keys are JSON pointers.")
-	rootCmd.Flags().StringVar(&entraIDAllowedGroups, "entraid-allowed-groups", getEnvWithDefault("ENTRAID_ALLOWED_GROUPS", ""), "Comma-separated Microsoft Entra ID group object IDs. Requires the --oidc-* flags to be configured against an Entra tenant; reuses the OIDC client credentials. If set, adds membership in any of these groups as an additional allow path (combined with --oidc-allowed-users/--oidc-allowed-users-glob/--oidc-allowed-attributes/--oidc-allowed-attributes-glob via OR). Membership is checked via the Microsoft Graph API.")
-	rootCmd.Flags().StringVar(&entraIDGraphAPIEndpoint, "entraid-graph-api-endpoint", getEnvWithDefault("ENTRAID_GRAPH_API_ENDPOINT", "https://graph.microsoft.com"), "Microsoft Graph API base URL used by --entraid-allowed-groups. Override for sovereign clouds (e.g., https://graph.microsoft.us).")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")
