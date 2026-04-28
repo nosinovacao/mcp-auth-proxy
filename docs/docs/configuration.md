@@ -129,6 +129,60 @@ For Okta, you typically need to:
 2. Configure a groups claim in Okta Admin (Security → API → Authorization Servers → Claims)
    :::
 
+#### Microsoft Entra ID (Graph API Group Membership)
+
+For Microsoft Entra ID (formerly Azure AD) deployments where group claims are
+not present in the ID token or userinfo response, the proxy can resolve group
+membership via the Microsoft Graph API using the OIDC client credentials. These
+flags augment the generic OIDC provider — the `--oidc-configuration-url`,
+`--oidc-client-id`, and `--oidc-client-secret` flags must already be configured
+against the Entra tenant.
+
+| Option                        | Environment Variable        | Default                       | Description                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------- | --------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--entraid-allowed-groups`    | `ENTRAID_ALLOWED_GROUPS`    | -                             | Comma-separated Microsoft Entra ID group object IDs. When set, membership in any of these groups is added as an additional allow path (combined with `--oidc-allowed-users`, `--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and `--oidc-allowed-attributes-glob` via OR). Membership is checked via the Microsoft Graph API. Reuses `--oidc-client-id`/`--oidc-client-secret`.                                |
+| `--entraid-graph-api-endpoint`| `ENTRAID_GRAPH_API_ENDPOINT`| `https://graph.microsoft.com` | Microsoft Graph API base URL used by `--entraid-allowed-groups`. Override for sovereign clouds (e.g., `https://graph.microsoft.us`).                                                                                                                                                                                                                                                                                     |
+
+This feature uses the Microsoft Graph
+[`checkMemberGroups`](https://learn.microsoft.com/en-us/graph/api/user-checkmembergroups)
+endpoint with client credentials, matching the approach used by Grafana
+(`force_use_graph_api: true`).
+
+**Prerequisites:**
+
+- The Entra ID app registration must have `GroupMember.Read.All` (Application
+  type) permission.
+- Admin consent must be granted for that permission.
+- The same `--oidc-client-id`/`--oidc-client-secret` are reused for the Graph
+  API call.
+
+**Authorization semantics:** `--entraid-allowed-groups` adds group membership
+as an additional allow path. It is combined with `--oidc-allowed-users`,
+`--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and
+`--oidc-allowed-attributes-glob` via OR — a user is allowed if they match any
+one of those filters. If the Graph lookup is reached (i.e., none of the earlier
+filters already allowed the user) and the Graph API is unreachable or returns
+an error, that check denies access (fail closed). Users already authorized by
+the earlier filters are not affected by a Graph outage.
+
+**Example:**
+
+```bash
+mcp-auth-proxy \
+  --oidc-configuration-url "https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration" \
+  --oidc-client-id "$CLIENT_ID" \
+  --oidc-client-secret "$CLIENT_SECRET" \
+  --entraid-allowed-groups "group-id-1,group-id-2" \
+  --external-url "https://mcp.example.com" \
+  http://localhost:8000
+```
+
+For sovereign clouds, override the Graph API endpoint:
+
+```bash
+--entraid-graph-api-endpoint "https://graph.microsoft.us"
+```
+
 ### Cryptographic Key Options
 
 - **`AUTH_HMAC_SECRET`** — Base64-encoded 32-byte secret for HMAC/cookie signing. Default: auto-generated.
