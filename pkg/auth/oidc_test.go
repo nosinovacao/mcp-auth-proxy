@@ -49,8 +49,6 @@ func setupOIDCTest(allowedUsers []string, userIDField string) (Provider, gin.IRo
 		nil,
 		nil,
 		nil,
-		"",
-		nil,
 	)
 	if err != nil {
 		panic(err)
@@ -192,8 +190,6 @@ func TestOIDCProviderErrors(t *testing.T) {
 			nil,
 			nil,
 			nil,
-			"",
-			nil,
 		)
 		require.Error(t, err)
 	})
@@ -218,8 +214,6 @@ func TestOIDCProviderErrors(t *testing.T) {
 			[]string{},
 			nil,
 			nil,
-			nil,
-			"",
 			nil,
 		)
 		require.Error(t, err)
@@ -317,8 +311,6 @@ func TestOIDCProviderGlobPatterns(t *testing.T) {
 		[]string{"*@example.com", "admin.*@company.*"},
 		nil,
 		nil,
-		nil,
-		"",
 		nil,
 	)
 	require.NoError(t, err)
@@ -472,8 +464,6 @@ func TestOIDCProviderAttributeMatching(t *testing.T) {
 				tc.allowedAttributes,
 				tc.allowedAttributesGlob,
 				nil,
-				"",
-				nil,
 			)
 			require.NoError(t, err)
 
@@ -495,4 +485,24 @@ func TestOIDCProviderAttributeMatching(t *testing.T) {
 			require.Equal(t, tc.expected, authorized, "Expected %v for test case %s", tc.expected, tc.name)
 		})
 	}
+}
+
+func TestOIDCProviderAuthorization_EntraIDResolverNilWhenDisabled(t *testing.T) {
+	// When no Entra ID config is supplied, the resolver must be nil so the
+	// Graph branch in Authorization is skipped entirely. A non-nil
+	// resolver here would mean we'd try to call Microsoft Graph for every
+	// non-Entra OIDC IdP that ever lands in this provider.
+	p, _, userinfo, tsConfig := setupOIDCTest([]string{"other@example.com"}, "/email")
+	defer tsConfig.Close()
+
+	userinfo.GET("/userinfo", func(c *gin.Context) {
+		c.JSON(http.StatusOK, map[string]any{"sub": "u1", "email": "denied@example.com"})
+	})
+
+	op := p.(*oidcProvider)
+	require.Nil(t, op.entraIDResolver)
+
+	allowed, _, _, err := p.Authorization(context.Background(), &oauth2.Token{AccessToken: "t"})
+	require.NoError(t, err)
+	require.False(t, allowed)
 }
