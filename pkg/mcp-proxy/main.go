@@ -70,8 +70,8 @@ func Run(
 	oidcAllowedUsersGlob []string,
 	oidcAllowedAttributes map[string][]string,
 	oidcAllowedAttributesGlob map[string][]string,
-	oidcAllowedGroups []string,
-	oidcGraphAPIEndpoint string,
+	entraIDAllowedGroups []string,
+	entraIDGraphAPIEndpoint string,
 	noProviderAutoSelect bool,
 	password string,
 	passwordHash string,
@@ -268,8 +268,8 @@ func Run(
 			oidcAllowedUsersGlob,
 			oidcAllowedAttributes,
 			oidcAllowedAttributesGlob,
-			oidcAllowedGroups,
-			oidcGraphAPIEndpoint,
+			entraIDAllowedGroups,
+			entraIDGraphAPIEndpoint,
 			logger,
 		)
 		if err != nil {
