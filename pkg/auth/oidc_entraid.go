@@ -117,13 +117,20 @@ func (r *entraIDGroupResolver) Check(ctx context.Context, userInfoMap map[string
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("Graph API request failed: %w", err)
+		return false, fmt.Errorf("graph API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("Graph API returned %d: %s", resp.StatusCode, string(respBody))
+		// Bound the body we keep for the error message so a large or
+		// malicious response can't blow up memory or log lines.
+		const maxGraphAPIErrorBodyBytes = 4096
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxGraphAPIErrorBodyBytes))
+		respBodyText := string(respBody)
+		if len(respBody) == maxGraphAPIErrorBodyBytes {
+			respBodyText += "...(truncated)"
+		}
+		return false, fmt.Errorf("graph API returned %d: %s", resp.StatusCode, respBodyText)
 	}
 
 	var result struct {
