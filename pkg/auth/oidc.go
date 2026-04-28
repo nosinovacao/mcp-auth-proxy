@@ -30,8 +30,8 @@ type oidcProvider struct {
 	allowedUsersGlob      []glob.Glob
 	allowedAttributes     map[string][]string
 	allowedAttributesGlob map[string][]glob.Glob
-	allowedGroups         []string
-	graphAPIEndpoint      string
+	entraIDAllowedGroups         []string
+	entraIDGraphAPIEndpoint      string
 	graphTokenSource      oauth2.TokenSource
 	graphHTTPClient       *http.Client
 	graphLogger           *zap.Logger
@@ -41,7 +41,7 @@ func NewOIDCProvider(
 	configurationURL string, scopes []string, userIDField string,
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
-	allowedGroups []string, graphAPIEndpoint string, logger *zap.Logger,
+	entraIDAllowedGroups []string, entraIDGraphAPIEndpoint string, logger *zap.Logger,
 ) (Provider, error) {
 	resp, err := http.Get(configurationURL)
 	if err != nil {
@@ -107,13 +107,13 @@ func NewOIDCProvider(
 		allowedAttributesGlob: compiledAttributeGlobs,
 	}
 
-	if len(allowedGroups) > 0 {
-		normalizedEndpoint := strings.TrimRight(graphAPIEndpoint, "/")
+	if len(entraIDAllowedGroups) > 0 {
+		normalizedEndpoint := strings.TrimRight(entraIDGraphAPIEndpoint, "/")
 		parsedEndpoint, err := url.Parse(normalizedEndpoint)
 		if normalizedEndpoint == "" || err != nil || !parsedEndpoint.IsAbs() ||
 			parsedEndpoint.Host == "" ||
 			(parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") {
-			return nil, fmt.Errorf("invalid graph API endpoint %q: must be an absolute http(s) URL with a host when allowed groups are configured", graphAPIEndpoint)
+			return nil, fmt.Errorf("invalid graph API endpoint %q: must be an absolute http(s) URL with a host when allowed groups are configured", entraIDGraphAPIEndpoint)
 		}
 		// Bound token-endpoint HTTP calls so a stalled IdP can't wedge the
 		// auth flow. The TokenSource caches tokens across requests, so this
@@ -127,8 +127,8 @@ func NewOIDCProvider(
 			Scopes:       []string{normalizedEndpoint + "/.default"},
 		}
 		p.graphTokenSource = ccConfig.TokenSource(tokenCtx)
-		p.allowedGroups = allowedGroups
-		p.graphAPIEndpoint = normalizedEndpoint
+		p.entraIDAllowedGroups = entraIDAllowedGroups
+		p.entraIDGraphAPIEndpoint = normalizedEndpoint
 		p.graphHTTPClient = http.DefaultClient
 		if logger != nil {
 			p.graphLogger = logger
@@ -200,7 +200,7 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 	// If no restrictions are set, allow all users
 	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 &&
 		len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 &&
-		len(p.allowedGroups) == 0 {
+		len(p.entraIDAllowedGroups) == 0 {
 		return true, userID, userInfoMap, nil
 	}
 
@@ -239,7 +239,7 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 	}
 
 	// Graph API group membership check
-	if len(p.allowedGroups) > 0 {
+	if len(p.entraIDAllowedGroups) > 0 {
 		allowed, err := p.checkGraphAPIGroups(ctx, userInfoMap)
 		if err != nil {
 			p.graphLogger.Error("Graph API group check failed", zap.Error(err))
@@ -264,13 +264,13 @@ func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[
 		return false, fmt.Errorf("failed to get Graph API token: %w", err)
 	}
 
-	reqBody := map[string]any{"groupIds": p.allowedGroups}
+	reqBody := map[string]any{"groupIds": p.entraIDAllowedGroups}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("%s/v1.0/users/%s/checkMemberGroups", p.graphAPIEndpoint, url.PathEscape(oid))
+	endpoint := fmt.Sprintf("%s/v1.0/users/%s/checkMemberGroups", p.entraIDGraphAPIEndpoint, url.PathEscape(oid))
 	httpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
