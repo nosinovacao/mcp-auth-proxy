@@ -189,11 +189,63 @@ For group-based authorization with Okta:
 --oidc-configuration-url "https://your-domain.auth0.com/.well-known/openid-configuration"
 ```
 
-#### Azure AD
+#### Azure AD / Microsoft Entra ID
 
 ```bash
 --oidc-configuration-url "https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration"
 ```
+
+##### Group Membership via Microsoft Graph API
+
+Entra ID often does not emit group claims in the ID token or userinfo response,
+so `--oidc-allowed-attributes` against `/groups` will not work out of the box.
+Instead, use `--entraid-allowed-groups` to have the proxy resolve group
+membership via the Microsoft Graph
+[`checkMemberGroups`](https://learn.microsoft.com/en-us/graph/api/user-checkmembergroups)
+endpoint, using the OIDC client credentials.
+
+1. **Grant the `GroupMember.Read.All` application permission** on the Entra ID
+   app registration:
+   - In the Azure portal, open your app registration → **API permissions**.
+   - Click **Add a permission** → **Microsoft Graph** → **Application
+     permissions**.
+   - Search for and add `GroupMember.Read.All`.
+   - Click **Grant admin consent** for your tenant (admin role required).
+
+2. **Collect the group object IDs** you want to allow (Entra ID → Groups → copy
+   each group's Object ID — these are GUIDs).
+
+3. **Run the proxy** with `--entraid-allowed-groups`:
+
+   ```bash
+   ./mcp-auth-proxy \
+     --external-url https://{your-domain} \
+     --tls-accept-tos \
+     --oidc-configuration-url "https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration" \
+     --oidc-client-id "$CLIENT_ID" \
+     --oidc-client-secret "$CLIENT_SECRET" \
+     --entraid-allowed-groups "group-id-1,group-id-2" \
+     -- your-mcp-command
+   ```
+
+   For sovereign clouds (e.g., US Government), override the Graph endpoint:
+
+   ```bash
+   --entraid-graph-api-endpoint "https://graph.microsoft.us"
+   ```
+
+Notes:
+
+- `--entraid-allowed-groups` is combined with `--oidc-allowed-users`,
+  `--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and
+  `--oidc-allowed-attributes-glob` via OR.
+- The same `--oidc-client-id`/`--oidc-client-secret` are reused for the Graph
+  API call — no separate credentials are needed.
+- If the Graph lookup is reached and the Graph API is unreachable or returns an
+  error, the check denies access (fail closed).
+
+See the [Configuration Reference](./configuration.md#microsoft-entra-id-graph-api-group-membership)
+for the full flag reference.
 
 ## Multiple Providers
 
@@ -236,6 +288,11 @@ export OIDC_ALLOWED_USERS="user1@example.com,user2@example.com"
 export OIDC_ALLOWED_USERS_GLOB="*@example.com"
 export OIDC_ALLOWED_ATTRIBUTES="/groups=admin,/department=engineering"
 export OIDC_ALLOWED_ATTRIBUTES_GLOB="/groups=*-admins"
+
+# Microsoft Entra ID group membership (Graph API)
+export ENTRAID_ALLOWED_GROUPS="group-id-1,group-id-2"
+# Override only for sovereign clouds, otherwise omit:
+# export ENTRAID_GRAPH_API_ENDPOINT="https://graph.microsoft.us"
 
 ./mcp-auth-proxy --external-url https://{your-domain} --tls-accept-tos -- your-mcp-command
 ```
