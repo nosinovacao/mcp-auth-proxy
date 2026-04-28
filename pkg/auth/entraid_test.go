@@ -153,9 +153,16 @@ func TestNewEntraIDGroupResolver_RejectsBadEndpoint(t *testing.T) {
 		endpoint string
 	}{
 		{"empty", ""},
+		{"whitespace only", "   "},
 		{"relative", "graph.microsoft.com"},
 		{"missing host", "https://"},
 		{"unsupported scheme", "ftp://graph.microsoft.com"},
+		{"with path", "https://graph.microsoft.com/v1.0"},
+		{"with deep path", "https://graph.microsoft.com/v1.0/users"},
+		{"with query", "https://graph.microsoft.com?api-version=1.0"},
+		{"with fragment", "https://graph.microsoft.com#section"},
+		{"with path and query", "https://graph.microsoft.com/v1.0?foo=bar"},
+		{"with path query and fragment", "https://graph.microsoft.com/v1.0?foo=bar#frag"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,4 +183,40 @@ func TestNewEntraIDGroupResolver_TrimsTrailingSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	require.Equal(t, "https://graph.microsoft.com", r.graphAPIEndpoint)
+}
+
+func TestNewEntraIDGroupResolver_TrimsWhitespace(t *testing.T) {
+	r, err := NewEntraIDGroupResolver(&EntraIDGroupResolverConfig{
+		AllowedGroups:    []string{"group-1"},
+		GraphAPIEndpoint: "  https://graph.microsoft.com  ",
+	}, "https://login.example/token", "id", "secret")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	require.Equal(t, "https://graph.microsoft.com", r.graphAPIEndpoint)
+}
+
+func TestNewEntraIDGroupResolver_AcceptsValidEndpoints(t *testing.T) {
+	cases := []struct {
+		name       string
+		endpoint   string
+		normalized string
+	}{
+		{"https bare", "https://graph.microsoft.com", "https://graph.microsoft.com"},
+		{"https trailing slash", "https://graph.microsoft.com/", "https://graph.microsoft.com"},
+		{"http bare", "http://localhost:8080", "http://localhost:8080"},
+		{"http trailing slash", "http://localhost:8080/", "http://localhost:8080"},
+		{"with port", "https://graph.microsoft.com:443", "https://graph.microsoft.com:443"},
+		{"whitespace padded with slash", "  https://graph.microsoft.com/  ", "https://graph.microsoft.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewEntraIDGroupResolver(&EntraIDGroupResolverConfig{
+				AllowedGroups:    []string{"group-1"},
+				GraphAPIEndpoint: tc.endpoint,
+			}, "https://login.example/token", "id", "secret")
+			require.NoError(t, err)
+			require.NotNil(t, r)
+			require.Equal(t, tc.normalized, r.graphAPIEndpoint)
+		})
+	}
 }
