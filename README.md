@@ -58,6 +58,47 @@ _Note_: They are not mutually exclusive. You can **put `mcp-auth-proxy` in front
 
 **TL;DR:** Orchestrate many → Gateway / Expose safely & quickly → mcp-auth-proxy
 
+## Azure AD Group-Based Access Control (Microsoft Graph API)
+
+For Azure AD deployments that require group-based access control, use `--oidc-allowed-groups`
+to specify which Azure AD group object IDs are allowed to access the MCP server.
+
+This feature uses the Microsoft Graph API with client credentials to check group membership,
+matching the approach used by Grafana (`force_use_graph_api: true`). It is useful when
+group claims are not present in the ID token or userinfo response (common in Azure AD).
+
+**Prerequisites:**
+- The Azure AD app registration must have `GroupMember.Read.All` (Application type) permission
+- Admin consent must be granted for this permission
+- The same `--oidc-client-id` and `--oidc-client-secret` are used for both OIDC and Graph API
+
+**Example:**
+
+```sh
+mcp-auth-proxy \
+  --oidc-configuration-url "https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration" \
+  --oidc-client-id "$CLIENT_ID" \
+  --oidc-client-secret "$CLIENT_SECRET" \
+  --oidc-allowed-groups "group-id-1,group-id-2" \
+  --external-url "https://mcp.example.com" \
+  http://localhost:8000
+```
+
+For sovereign clouds, override the Graph API endpoint:
+
+```sh
+--oidc-graph-api-endpoint "https://graph.microsoft.us"
+```
+
+**Authorization semantics:** `--oidc-allowed-groups` adds group membership as an
+additional allow path. It is combined with `--oidc-allowed-users`,
+`--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and
+`--oidc-allowed-attributes-glob` via OR — a user is allowed if they match any
+one of those filters. If the Graph lookup is reached (i.e., none of the
+earlier filters already allowed the user) and Graph API is unreachable or
+returns an error, that check denies access (fail closed). Users already
+authorized by the earlier filters are not affected by a Graph outage.
+
 ## Verified MCP Client
 
 | MCP Client        | Status | Notes                                            |

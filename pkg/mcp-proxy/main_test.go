@@ -46,6 +46,7 @@ func TestRun_NormalizesExternalURLTrailingSlash(t *testing.T) {
 				"", "", nil, nil,
 				"", "", nil, nil,
 				"", "", "", nil, "", "", nil, nil, nil, nil,
+				nil, "",
 				false, "", "", nil, nil, "", false,
 				[]string{"http://example.com"}, false, nil, "/userinfo",
 			)
@@ -106,6 +107,8 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		"",
 		false,
 		"",
 		"",

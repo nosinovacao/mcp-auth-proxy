@@ -1,17 +1,24 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gobwas/glob"
 	"github.com/mattn/go-jsonpointer"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 type oidcProvider struct {
@@ -23,12 +30,18 @@ type oidcProvider struct {
 	allowedUsersGlob      []glob.Glob
 	allowedAttributes     map[string][]string
 	allowedAttributesGlob map[string][]glob.Glob
+	allowedGroups         []string
+	graphAPIEndpoint      string
+	graphTokenSource      oauth2.TokenSource
+	graphHTTPClient       *http.Client
+	graphLogger           *zap.Logger
 }
 
 func NewOIDCProvider(
 	configurationURL string, scopes []string, userIDField string,
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
+	allowedGroups []string, graphAPIEndpoint string, logger *zap.Logger,
 ) (Provider, error) {
 	resp, err := http.Get(configurationURL)
 	if err != nil {
@@ -74,7 +87,7 @@ func NewOIDCProvider(
 		}
 	}
 
-	return &oidcProvider{
+	p := &oidcProvider{
 		oauth2: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -92,7 +105,39 @@ func NewOIDCProvider(
 		allowedUsersGlob:      compiledGlobs,
 		allowedAttributes:     allowedAttributes,
 		allowedAttributesGlob: compiledAttributeGlobs,
-	}, nil
+	}
+
+	if len(allowedGroups) > 0 {
+		normalizedEndpoint := strings.TrimRight(graphAPIEndpoint, "/")
+		parsedEndpoint, err := url.Parse(normalizedEndpoint)
+		if normalizedEndpoint == "" || err != nil || !parsedEndpoint.IsAbs() ||
+			parsedEndpoint.Host == "" ||
+			(parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") {
+			return nil, fmt.Errorf("invalid graph API endpoint %q: must be an absolute http(s) URL with a host when allowed groups are configured", graphAPIEndpoint)
+		}
+		// Bound token-endpoint HTTP calls so a stalled IdP can't wedge the
+		// auth flow. The TokenSource caches tokens across requests, so this
+		// only trips on initial fetch or refresh.
+		tokenHTTPClient := &http.Client{Timeout: 10 * time.Second}
+		tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
+		ccConfig := clientcredentials.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			TokenURL:     cfg.TokenEndpoint,
+			Scopes:       []string{normalizedEndpoint + "/.default"},
+		}
+		p.graphTokenSource = ccConfig.TokenSource(tokenCtx)
+		p.allowedGroups = allowedGroups
+		p.graphAPIEndpoint = normalizedEndpoint
+		p.graphHTTPClient = http.DefaultClient
+		if logger != nil {
+			p.graphLogger = logger
+		} else {
+			p.graphLogger = zap.NewNop()
+		}
+	}
+
+	return p, nil
 }
 
 func (p *oidcProvider) Name() string {
@@ -153,7 +198,9 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 	}
 
 	// If no restrictions are set, allow all users
-	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 && len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 {
+	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 &&
+		len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 &&
+		len(p.allowedGroups) == 0 {
 		return true, userID, userInfoMap, nil
 	}
 
@@ -191,7 +238,96 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 		}
 	}
 
+	// Graph API group membership check
+	if len(p.allowedGroups) > 0 {
+		allowed, err := p.checkGraphAPIGroups(ctx, userInfoMap)
+		if err != nil {
+			p.graphLogger.Error("Graph API group check failed", zap.Error(err))
+			return false, userID, userInfoMap, nil // fail closed
+		}
+		if allowed {
+			return true, userID, userInfoMap, nil
+		}
+	}
+
 	return false, userID, userInfoMap, nil
+}
+
+func (p *oidcProvider) checkGraphAPIGroups(ctx context.Context, userInfoMap map[string]any) (bool, error) {
+	oid, err := graphUserID(userInfoMap)
+	if err != nil {
+		return false, err
+	}
+
+	token, err := p.graphTokenSource.Token()
+	if err != nil {
+		return false, fmt.Errorf("failed to get Graph API token: %w", err)
+	}
+
+	reqBody := map[string]any{"groupIds": p.allowedGroups}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/v1.0/users/%s/checkMemberGroups", p.graphAPIEndpoint, url.PathEscape(oid))
+	httpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(httpCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := p.graphHTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("Graph API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		const maxGraphAPIErrorBodyBytes = 4096
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxGraphAPIErrorBodyBytes+1))
+		respBodyText := string(respBody)
+		if len(respBody) > maxGraphAPIErrorBodyBytes {
+			respBodyText = string(respBody[:maxGraphAPIErrorBodyBytes]) + "... (truncated)"
+		}
+		return false, fmt.Errorf("Graph API returned %d: %s", resp.StatusCode, respBodyText)
+	}
+
+	var result struct {
+		Value []string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("failed to decode Graph API response: %w", err)
+	}
+
+	return len(result.Value) > 0, nil
+}
+
+// graphUserID returns the Azure AD object ID to use for Graph lookups,
+// preferring /oid and falling back to /sub. A claim that is missing,
+// non-string, or an empty string is skipped so that a present-but-invalid
+// /oid (e.g. null) doesn't block a usable /sub from being tried.
+func graphUserID(userInfoMap map[string]any) (string, error) {
+	for _, pointer := range []string{"/oid", "/sub"} {
+		v, err := jsonpointer.Get(userInfoMap, pointer)
+		if err != nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok || s == "" {
+			continue
+		}
+		return s, nil
+	}
+	return "", errors.New("user object ID (oid/sub) not found in userinfo")
 }
 
 // matchAttributeValue checks if an attribute value matches any of the allowed values.

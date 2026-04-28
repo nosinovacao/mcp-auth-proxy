@@ -146,6 +146,8 @@ type proxyRunnerFunc func(
 	oidcAllowedUsersGlob []string,
 	oidcAllowedAttributes map[string][]string,
 	oidcAllowedAttributesGlob map[string][]string,
+	oidcAllowedGroups []string,
+	oidcGraphAPIEndpoint string,
 	noProviderAutoSelect bool,
 	password string,
 	passwordHash string,
@@ -196,6 +198,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var oidcAllowedUsersGlob string
 	var oidcAllowedAttributes string
 	var oidcAllowedAttributesGlob string
+	var oidcAllowedGroups string
+	var oidcGraphAPIEndpoint string
 	var noProviderAutoSelect bool
 	var password string
 	var passwordHash string
@@ -258,6 +262,15 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 			oidcAllowedAttributesMap := parseAttributeMap(oidcAllowedAttributes)
 			oidcAllowedAttributesGlobMap := parseAttributeMap(oidcAllowedAttributesGlob)
 
+			var oidcAllowedGroupsList []string
+			if oidcAllowedGroups != "" {
+				for _, g := range strings.Split(oidcAllowedGroups, ",") {
+					if trimmed := strings.TrimSpace(g); trimmed != "" {
+						oidcAllowedGroupsList = append(oidcAllowedGroupsList, trimmed)
+					}
+				}
+			}
+
 			var oidcScopesList []string
 			if oidcScopes != "" {
 				oidcScopesList = strings.Split(oidcScopes, ",")
@@ -318,6 +331,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				oidcAllowedUsersGlobList,
 				oidcAllowedAttributesMap,
 				oidcAllowedAttributesGlobMap,
+				oidcAllowedGroupsList,
+				oidcGraphAPIEndpoint,
 				noProviderAutoSelect,
 				password,
 				passwordHash,
@@ -371,6 +386,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&oidcAllowedUsersGlob, "oidc-allowed-users-glob", getEnvWithDefault("OIDC_ALLOWED_USERS_GLOB", ""), "Comma-separated list of glob patterns for allowed OIDC users")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributes, "oidc-allowed-attributes", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES", ""), "Comma-separated list of allowed attribute key=value pairs (e.g., /groups=admin,/roles=editor). Keys are JSON pointers.")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributesGlob, "oidc-allowed-attributes-glob", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES_GLOB", ""), "Comma-separated list of attribute key=pattern pairs for glob matching (e.g., /groups=*-admins,/email=*@example.com). Keys are JSON pointers.")
+	rootCmd.Flags().StringVar(&oidcAllowedGroups, "oidc-allowed-groups", getEnvWithDefault("OIDC_ALLOWED_GROUPS", ""), "Comma-separated Azure AD group object IDs. If set, adds membership in any of these groups as an additional allow path (combined with --oidc-allowed-users/--oidc-allowed-users-glob/--oidc-allowed-attributes/--oidc-allowed-attributes-glob via OR). Membership is checked via the Microsoft Graph API using client credentials.")
+	rootCmd.Flags().StringVar(&oidcGraphAPIEndpoint, "oidc-graph-api-endpoint", getEnvWithDefault("OIDC_GRAPH_API_ENDPOINT", "https://graph.microsoft.com"), "Microsoft Graph API base URL. Override for sovereign clouds (e.g., https://graph.microsoft.us).")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

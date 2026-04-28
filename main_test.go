@@ -394,6 +394,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcAllowedGroups []string,
+		oidcGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -460,6 +462,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcAllowedGroups []string,
+		oidcGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -522,6 +526,8 @@ func TestNewRootCommand_ForwardAuthorizationFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcAllowedGroups []string,
+		oidcGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -584,6 +590,8 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcAllowedGroups []string,
+		oidcGraphAPIEndpoint string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -609,5 +617,107 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 
 	if !forwardAuthorization {
 		t.Fatalf("expected forwardAuthorizationHeader to default to true from env var")
+	}
+}
+
+func captureOIDCGroupsRunner(outGroups *[]string, outEndpoint *string) proxyRunnerFunc {
+	return proxyRunnerFunc(func(listen string,
+		tlsListen string,
+		autoTLS bool,
+		tlsHost string,
+		tlsDirectoryURL string,
+		tlsAcceptTOS bool,
+		tlsCertFile string,
+		tlsKeyFile string,
+		dataPath string,
+		repositoryBackend string,
+		repositoryDSN string,
+		externalURL string,
+		googleClientID string,
+		googleClientSecret string,
+		googleAllowedUsers []string,
+		googleAllowedWorkspaces []string,
+		githubClientID string,
+		githubClientSecret string,
+		githubAllowedUsers []string,
+		githubAllowedOrgs []string,
+		oidcConfigurationURL string,
+		oidcClientID string,
+		oidcClientSecret string,
+		oidcScopes []string,
+		oidcUserIDField string,
+		oidcProviderName string,
+		oidcAllowedUsers []string,
+		oidcAllowedUsersGlob []string,
+		oidcAllowedAttributes map[string][]string,
+		oidcAllowedAttributesGlob map[string][]string,
+		oidcAllowedGroups []string,
+		oidcGraphAPIEndpoint string,
+		noProviderAutoSelect bool,
+		password string,
+		passwordHash string,
+		trustedProxy []string,
+		proxyHeaders []string,
+		proxyBearerToken string,
+		forwardAuthorizationHeader bool,
+		proxyTarget []string,
+		httpStreamingOnly bool,
+		headerMapping map[string]string,
+		headerMappingBase string,
+	) error {
+		*outGroups = oidcAllowedGroups
+		*outEndpoint = oidcGraphAPIEndpoint
+		return nil
+	})
+}
+
+func TestNewRootCommand_OIDCAllowedGroupsFlag(t *testing.T) {
+	t.Setenv("OIDC_ALLOWED_GROUPS", "")
+	t.Setenv("OIDC_GRAPH_API_ENDPOINT", "")
+
+	var gotGroups []string
+	var gotEndpoint string
+	cmd := newRootCommand(captureOIDCGroupsRunner(&gotGroups, &gotEndpoint))
+	// Trailing comma + surrounding whitespace must be dropped; sovereign
+	// cloud endpoint override must flow through.
+	cmd.SetArgs([]string{
+		"--oidc-allowed-groups", " group-1 , ,group-2,",
+		"--oidc-graph-api-endpoint", "https://graph.microsoft.us",
+		"http://backend",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	wantGroups := []string{"group-1", "group-2"}
+	if !reflect.DeepEqual(gotGroups, wantGroups) {
+		t.Fatalf("expected groups %v, got %v", wantGroups, gotGroups)
+	}
+	if gotEndpoint != "https://graph.microsoft.us" {
+		t.Fatalf("expected endpoint override, got %q", gotEndpoint)
+	}
+}
+
+func TestNewRootCommand_OIDCAllowedGroupsFromEnv(t *testing.T) {
+	t.Setenv("OIDC_ALLOWED_GROUPS", "env-group-1,env-group-2")
+	t.Setenv("OIDC_GRAPH_API_ENDPOINT", "")
+
+	var gotGroups []string
+	var gotEndpoint string
+	cmd := newRootCommand(captureOIDCGroupsRunner(&gotGroups, &gotEndpoint))
+	cmd.SetArgs([]string{"http://backend"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	wantGroups := []string{"env-group-1", "env-group-2"}
+	if !reflect.DeepEqual(gotGroups, wantGroups) {
+		t.Fatalf("expected env groups %v, got %v", wantGroups, gotGroups)
+	}
+	// Default endpoint applies when env and flag are unset.
+	if gotEndpoint != "https://graph.microsoft.com" {
+		t.Fatalf("expected default graph endpoint, got %q", gotEndpoint)
 	}
 }
