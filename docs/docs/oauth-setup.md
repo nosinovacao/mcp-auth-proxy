@@ -201,21 +201,17 @@ Entra ID often does not emit group claims in the ID token or userinfo response,
 so `--oidc-allowed-attributes` against `/groups` will not work out of the box.
 Instead, use `--entraid-allowed-groups` to have the proxy resolve group
 membership via the Microsoft Graph
-[`checkMemberGroups`](https://learn.microsoft.com/en-us/graph/api/user-checkmembergroups)
-endpoint, using the OIDC client credentials.
+[`getMemberObjects`](https://learn.microsoft.com/en-us/graph/api/directoryobject-getmemberobjects)
+endpoint on `/me`, using the signed-in user's access token. This matches the
+approach Grafana takes when `force_use_graph_api` is enabled and only requires
+the delegated `User.Read` permission the user already consents to at sign-in —
+no `GroupMember.Read.All` / `Directory.Read.All` application permission and no
+admin consent.
 
-1. **Grant the `GroupMember.Read.All` application permission** on the Entra ID
-   app registration:
-   - In the Azure portal, open your app registration → **API permissions**.
-   - Click **Add a permission** → **Microsoft Graph** → **Application
-     permissions**.
-   - Search for and add `GroupMember.Read.All`.
-   - Click **Grant admin consent** for your tenant (admin role required).
-
-2. **Collect the group object IDs** you want to allow (Entra ID → Groups → copy
+1. **Collect the group object IDs** you want to allow (Entra ID → Groups → copy
    each group's Object ID — these are GUIDs).
 
-3. **Run the proxy** with `--entraid-allowed-groups`:
+2. **Run the proxy** with `--entraid-allowed-groups`:
 
    ```bash
    ./mcp-auth-proxy \

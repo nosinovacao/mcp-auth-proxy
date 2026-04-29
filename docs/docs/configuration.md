@@ -137,28 +137,28 @@ For Okta, you typically need to:
 
 For Microsoft Entra ID (formerly Azure AD) deployments where group claims are
 not present in the ID token or userinfo response, the proxy can resolve group
-membership via the Microsoft Graph API using the OIDC client credentials. These
-flags augment the generic OIDC provider — the `--oidc-configuration-url`,
-`--oidc-client-id`, and `--oidc-client-secret` flags must already be configured
-against the Entra tenant.
+membership via the Microsoft Graph API using the signed-in user's delegated
+access token. These flags augment the generic OIDC provider — the
+`--oidc-configuration-url`, `--oidc-client-id`, and `--oidc-client-secret`
+flags must already be configured against the Entra tenant.
 
 | Option                         | Environment Variable         | Default                       | Description                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------------ | ---------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--entraid-allowed-groups`     | `ENTRAID_ALLOWED_GROUPS`     | -                             | Comma-separated Microsoft Entra ID group object IDs. When set, membership in any of these groups is added as an additional allow path (combined with `--oidc-allowed-users`, `--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and `--oidc-allowed-attributes-glob` via OR). Membership is checked via the Microsoft Graph API. Reuses `--oidc-client-id`/`--oidc-client-secret`. |
 | `--entraid-graph-api-endpoint` | `ENTRAID_GRAPH_API_ENDPOINT` | `https://graph.microsoft.com` | Microsoft Graph API base URL used by `--entraid-allowed-groups`. Override for sovereign clouds (e.g., `https://graph.microsoft.us`).                                                                                                                                                                                                                                                      |
 
-This feature uses the Microsoft Graph
-[`checkMemberGroups`](https://learn.microsoft.com/en-us/graph/api/user-checkmembergroups)
-endpoint with client credentials, matching the approach used by Grafana
-(`force_use_graph_api: true`).
+This feature calls the Microsoft Graph
+[`getMemberObjects`](https://learn.microsoft.com/en-us/graph/api/directoryobject-getmemberobjects)
+endpoint on `/me` with the signed-in user's delegated access token, matching
+the approach used by Grafana (`force_use_graph_api: true`).
 
 **Prerequisites:**
 
-- The Entra ID app registration must have `GroupMember.Read.All` (Application
-  type) permission.
-- Admin consent must be granted for that permission.
-- The same `--oidc-client-id`/`--oidc-client-secret` are reused for the Graph
-  API call.
+- The Entra ID app registration only needs the delegated `User.Read`
+  permission the user already consents to at sign-in. No
+  `GroupMember.Read.All` / `Directory.Read.All` application permission and
+  no admin consent is required.
+- The same `--oidc-client-id`/`--oidc-client-secret` are reused.
 
 **Authorization semantics:** `--entraid-allowed-groups` adds group membership
 as an additional allow path. It is combined with `--oidc-allowed-users`,

@@ -67,14 +67,16 @@ augments the OIDC provider, so the `--oidc-configuration-url`,
 `--oidc-client-id`, and `--oidc-client-secret` flags must already be
 configured against the Entra tenant.
 
-This feature uses the Microsoft Graph API with client credentials to check group membership,
-matching the approach used by Grafana (`force_use_graph_api: true`). It is useful when
-group claims are not present in the ID token or userinfo response (common in Entra ID).
+This feature calls the Microsoft Graph `getMemberObjects` endpoint with the
+signed-in user's delegated access token, matching the approach used by Grafana
+(`force_use_graph_api: true`). It is useful when group claims are not present
+in the ID token or userinfo response (common in Entra ID).
 
 **Prerequisites:**
-- The Entra ID app registration must have `GroupMember.Read.All` (Application type) permission
-- Admin consent must be granted for this permission
-- The same `--oidc-client-id` and `--oidc-client-secret` are reused for the Graph API call
+- The Entra ID app registration only needs the delegated `User.Read` permission
+  the user already consents to at sign-in. No `GroupMember.Read.All` /
+  `Directory.Read.All` application permission and no admin consent is required.
+- The same `--oidc-client-id` and `--oidc-client-secret` are reused.
 
 **Example:**
 
