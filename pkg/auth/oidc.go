@@ -77,7 +77,7 @@ func NewOIDCProvider(
 		}
 	}
 
-	resolver, err := NewEntraIDGroupResolver(entraIDConfig, cfg.TokenEndpoint, clientID, clientSecret)
+	resolver, err := NewEntraIDGroupResolver(entraIDConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -202,9 +202,12 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 		}
 	}
 
-	// Entra ID group membership check (Microsoft Graph API)
+	// Entra ID group membership check (Microsoft Graph API). The resolver
+	// uses the signed-in user's delegated access token, so the app
+	// registration only needs the User.Read scope the user already
+	// consented to — no admin-granted application permission required.
 	if p.entraIDResolver != nil {
-		allowed, err := p.entraIDResolver.Check(ctx, userInfoMap)
+		allowed, err := p.entraIDResolver.Check(ctx, token)
 		if err != nil {
 			p.entraIDResolver.logger.Error("Entra ID group check failed", zap.Error(err))
 			return false, userID, userInfoMap, nil // fail closed
