@@ -239,6 +239,7 @@ func TestOIDCProviderErrors(t *testing.T) {
 			[]string{},
 			nil,
 			nil,
+			nil,
 		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "502 Bad Gateway")

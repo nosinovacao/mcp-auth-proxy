@@ -240,7 +240,12 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 			oidcAllowedAttributesMap := parseAttributeMap(oidcAllowedAttributes)
 			oidcAllowedAttributesGlobMap := parseAttributeMap(oidcAllowedAttributesGlob)
 
-			entraIDAllowedGroupsList := splitCSV(entraIDAllowedGroups)
+			var entraIDAllowedGroupsList []string
+			for _, g := range splitCSV(entraIDAllowedGroups) {
+				if g != "" {
+					entraIDAllowedGroupsList = append(entraIDAllowedGroupsList, g)
+				}
+			}
 
 			oidcScopesList := splitCSV(oidcScopes)
 			if len(oidcScopesList) == 0 {

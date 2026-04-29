@@ -678,6 +678,8 @@ func captureEntraIDGroupsRunner(outGroups *[]string, outEndpoint *string) proxyR
 		googleClientSecret string,
 		googleAllowedUsers []string,
 		googleAllowedWorkspaces []string,
+		githubURL string,
+		githubAPIURL string,
 		githubClientID string,
 		githubClientSecret string,
 		githubAllowedUsers []string,
