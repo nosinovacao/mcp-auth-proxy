@@ -50,11 +50,11 @@ services:
       - OIDC_ALLOWED_USERS_GLOB=*@example.com
       - OIDC_ALLOWED_ATTRIBUTES=/groups=admin,/department=engineering
       - OIDC_ALLOWED_ATTRIBUTES_GLOB=/groups=*-admins
-      # Microsoft Entra ID group membership (Graph API).
-      # Reuses OIDC_CLIENT_ID/OIDC_CLIENT_SECRET — see oauth-setup.md.
-      - ENTRAID_ALLOWED_GROUPS=group-id-1,group-id-2
-      # Override only for sovereign clouds (e.g., https://graph.microsoft.us):
-      # - ENTRAID_GRAPH_API_ENDPOINT=https://graph.microsoft.com
+      # OIDC distributed-claims resolution (e.g., for Microsoft Entra ID
+      # group overage). Match resolved groups via OIDC_ALLOWED_ATTRIBUTES
+      # above (e.g., /groups=group-id-1). See oauth-setup.md for details.
+      - OIDC_RESOLVE_DISTRIBUTED_CLAIMS=true
+      - OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST=graph.microsoft.com,graph.windows.net
       - TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     volumes:
       - ./data:/data
