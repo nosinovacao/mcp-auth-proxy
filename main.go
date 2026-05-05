@@ -146,8 +146,8 @@ type proxyRunnerFunc func(
 	oidcAllowedUsersGlob []string,
 	oidcAllowedAttributes map[string][]string,
 	oidcAllowedAttributesGlob map[string][]string,
-	entraIDAllowedGroups []string,
-	entraIDGraphAPIEndpoint string,
+	oidcResolveDistributedClaims bool,
+	oidcDistributedClaimsEndpointAllowlist []string,
 	noProviderAutoSelect bool,
 	password string,
 	passwordHash string,
@@ -198,8 +198,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var oidcAllowedUsersGlob string
 	var oidcAllowedAttributes string
 	var oidcAllowedAttributesGlob string
-	var entraIDAllowedGroups string
-	var entraIDGraphAPIEndpoint string
+	var oidcResolveDistributedClaims bool
+	var oidcDistributedClaimsEndpointAllowlist string
 	var noProviderAutoSelect bool
 	var password string
 	var passwordHash string
@@ -262,11 +262,11 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 			oidcAllowedAttributesMap := parseAttributeMap(oidcAllowedAttributes)
 			oidcAllowedAttributesGlobMap := parseAttributeMap(oidcAllowedAttributesGlob)
 
-			var entraIDAllowedGroupsList []string
-			if entraIDAllowedGroups != "" {
-				for _, g := range strings.Split(entraIDAllowedGroups, ",") {
-					if trimmed := strings.TrimSpace(g); trimmed != "" {
-						entraIDAllowedGroupsList = append(entraIDAllowedGroupsList, trimmed)
+			var oidcDistributedClaimsEndpointAllowlistList []string
+			if oidcDistributedClaimsEndpointAllowlist != "" {
+				for _, h := range strings.Split(oidcDistributedClaimsEndpointAllowlist, ",") {
+					if trimmed := strings.TrimSpace(h); trimmed != "" {
+						oidcDistributedClaimsEndpointAllowlistList = append(oidcDistributedClaimsEndpointAllowlistList, trimmed)
 					}
 				}
 			}
@@ -331,8 +331,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				oidcAllowedUsersGlobList,
 				oidcAllowedAttributesMap,
 				oidcAllowedAttributesGlobMap,
-				entraIDAllowedGroupsList,
-				entraIDGraphAPIEndpoint,
+				oidcResolveDistributedClaims,
+				oidcDistributedClaimsEndpointAllowlistList,
 				noProviderAutoSelect,
 				password,
 				passwordHash,
@@ -375,10 +375,6 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&githubAllowedUsers, "github-allowed-users", getEnvWithDefault("GITHUB_ALLOWED_USERS", ""), "Comma-separated list of allowed GitHub users (usernames)")
 	rootCmd.Flags().StringVar(&githubAllowedOrgs, "github-allowed-orgs", getEnvWithDefault("GITHUB_ALLOWED_ORGS", ""), "Comma-separated list of allowed GitHub organizations. You can also restrict access to specific teams using the format `Org:Team`")
 
-	// Entra ID / Microsoft Graph configuration
-	rootCmd.Flags().StringVar(&entraIDAllowedGroups, "entraid-allowed-groups", getEnvWithDefault("ENTRAID_ALLOWED_GROUPS", ""), "Comma-separated Microsoft Entra ID group object IDs. Requires the --oidc-* flags to be configured against an Entra tenant; reuses the OIDC client credentials. If set, adds membership in any of these groups as an additional allow path (combined with --oidc-allowed-users/--oidc-allowed-users-glob/--oidc-allowed-attributes/--oidc-allowed-attributes-glob via OR). Membership is checked via the Microsoft Graph API.")
-	rootCmd.Flags().StringVar(&entraIDGraphAPIEndpoint, "entraid-graph-api-endpoint", getEnvWithDefault("ENTRAID_GRAPH_API_ENDPOINT", "https://graph.microsoft.com"), "Microsoft Graph API base URL used by --entraid-allowed-groups. Override for sovereign clouds (e.g., https://graph.microsoft.us).")
-
 	// OIDC configuration
 	rootCmd.Flags().StringVar(&oidcConfigurationURL, "oidc-configuration-url", getEnvWithDefault("OIDC_CONFIGURATION_URL", ""), "OIDC configuration URL")
 	rootCmd.Flags().StringVar(&oidcClientID, "oidc-client-id", getEnvWithDefault("OIDC_CLIENT_ID", ""), "OIDC client ID")
@@ -390,6 +386,8 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().StringVar(&oidcAllowedUsersGlob, "oidc-allowed-users-glob", getEnvWithDefault("OIDC_ALLOWED_USERS_GLOB", ""), "Comma-separated list of glob patterns for allowed OIDC users")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributes, "oidc-allowed-attributes", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES", ""), "Comma-separated list of allowed attribute key=value pairs (e.g., /groups=admin,/roles=editor). Keys are JSON pointers.")
 	rootCmd.Flags().StringVar(&oidcAllowedAttributesGlob, "oidc-allowed-attributes-glob", getEnvWithDefault("OIDC_ALLOWED_ATTRIBUTES_GLOB", ""), "Comma-separated list of attribute key=pattern pairs for glob matching (e.g., /groups=*-admins,/email=*@example.com). Keys are JSON pointers.")
+	rootCmd.Flags().BoolVar(&oidcResolveDistributedClaims, "oidc-resolve-distributed-claims", getEnvBoolWithDefault("OIDC_RESOLVE_DISTRIBUTED_CLAIMS", false), "Enable resolution of OIDC distributed claims (OIDC Core 1.0 §5.6.2). When the IdP returns _claim_names/_claim_sources references instead of inlined claim values, the proxy dereferences each source endpoint and merges the resolved values back into the user's claim set so --oidc-allowed-attributes/-glob can match against them. Disabled by default; opt-in for use cases such as Microsoft Entra ID group overage. JWT signatures on resolved claim responses are not verified — trust is via TLS plus --oidc-distributed-claims-endpoint-allowlist.")
+	rootCmd.Flags().StringVar(&oidcDistributedClaimsEndpointAllowlist, "oidc-distributed-claims-endpoint-allowlist", getEnvWithDefault("OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST", ""), "Comma-separated list of host suffixes the distributed-claims resolver is allowed to fetch from (e.g., graph.microsoft.com). Each token-supplied endpoint host must equal one of these or be a subdomain of one. Empty allows any host the IdP advertises — strongly recommended to set this to defend against SSRF via crafted tokens.")
 
 	// Password authentication
 	rootCmd.Flags().BoolVar(&noProviderAutoSelect, "no-provider-auto-select", getEnvBoolWithDefault("NO_PROVIDER_AUTO_SELECT", false), "Disable auto-redirect when only one OAuth/OIDC provider is configured and no password is set")

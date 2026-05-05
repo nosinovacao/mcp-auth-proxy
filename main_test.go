@@ -394,8 +394,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		entraIDAllowedGroups []string,
-		entraIDGraphAPIEndpoint string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -462,8 +462,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		entraIDAllowedGroups []string,
-		entraIDGraphAPIEndpoint string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -526,8 +526,8 @@ func TestNewRootCommand_ForwardAuthorizationFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		entraIDAllowedGroups []string,
-		entraIDGraphAPIEndpoint string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -590,8 +590,8 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		entraIDAllowedGroups []string,
-		entraIDGraphAPIEndpoint string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -620,7 +620,7 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 	}
 }
 
-func captureEntraIDGroupsRunner(outGroups *[]string, outEndpoint *string) proxyRunnerFunc {
+func captureDistributedClaimsRunner(outEnabled *bool, outAllowlist *[]string) proxyRunnerFunc {
 	return proxyRunnerFunc(func(listen string,
 		tlsListen string,
 		autoTLS bool,
@@ -651,8 +651,8 @@ func captureEntraIDGroupsRunner(outGroups *[]string, outEndpoint *string) proxyR
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
-		entraIDAllowedGroups []string,
-		entraIDGraphAPIEndpoint string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -665,24 +665,24 @@ func captureEntraIDGroupsRunner(outGroups *[]string, outEndpoint *string) proxyR
 		headerMapping map[string]string,
 		headerMappingBase string,
 	) error {
-		*outGroups = entraIDAllowedGroups
-		*outEndpoint = entraIDGraphAPIEndpoint
+		*outEnabled = oidcResolveDistributedClaims
+		*outAllowlist = oidcDistributedClaimsEndpointAllowlist
 		return nil
 	})
 }
 
-func TestNewRootCommand_EntraIDAllowedGroupsFlag(t *testing.T) {
-	t.Setenv("ENTRAID_ALLOWED_GROUPS", "")
-	t.Setenv("ENTRAID_GRAPH_API_ENDPOINT", "")
+func TestNewRootCommand_DistributedClaimsFlags(t *testing.T) {
+	t.Setenv("OIDC_RESOLVE_DISTRIBUTED_CLAIMS", "")
+	t.Setenv("OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST", "")
 
-	var gotGroups []string
-	var gotEndpoint string
-	cmd := newRootCommand(captureEntraIDGroupsRunner(&gotGroups, &gotEndpoint))
-	// Trailing comma + surrounding whitespace must be dropped; sovereign
-	// cloud endpoint override must flow through.
+	var gotEnabled bool
+	var gotAllowlist []string
+	cmd := newRootCommand(captureDistributedClaimsRunner(&gotEnabled, &gotAllowlist))
+	// Trailing comma + surrounding whitespace must be dropped from the
+	// allowlist so admins can copy/paste configurations without surprises.
 	cmd.SetArgs([]string{
-		"--entraid-allowed-groups", " group-1 , ,group-2,",
-		"--entraid-graph-api-endpoint", "https://graph.microsoft.us",
+		"--oidc-resolve-distributed-claims",
+		"--oidc-distributed-claims-endpoint-allowlist", " graph.microsoft.com , ,graph.windows.net,",
 		"http://backend",
 	})
 
@@ -690,34 +690,33 @@ func TestNewRootCommand_EntraIDAllowedGroupsFlag(t *testing.T) {
 		t.Fatalf("expected command to succeed, got error: %v", err)
 	}
 
-	wantGroups := []string{"group-1", "group-2"}
-	if !reflect.DeepEqual(gotGroups, wantGroups) {
-		t.Fatalf("expected groups %v, got %v", wantGroups, gotGroups)
+	if !gotEnabled {
+		t.Fatalf("expected --oidc-resolve-distributed-claims to enable resolver")
 	}
-	if gotEndpoint != "https://graph.microsoft.us" {
-		t.Fatalf("expected endpoint override, got %q", gotEndpoint)
+	wantAllowlist := []string{"graph.microsoft.com", "graph.windows.net"}
+	if !reflect.DeepEqual(gotAllowlist, wantAllowlist) {
+		t.Fatalf("expected allowlist %v, got %v", wantAllowlist, gotAllowlist)
 	}
 }
 
-func TestNewRootCommand_EntraIDAllowedGroupsFromEnv(t *testing.T) {
-	t.Setenv("ENTRAID_ALLOWED_GROUPS", "env-group-1,env-group-2")
-	t.Setenv("ENTRAID_GRAPH_API_ENDPOINT", "")
+func TestNewRootCommand_DistributedClaimsFromEnv(t *testing.T) {
+	t.Setenv("OIDC_RESOLVE_DISTRIBUTED_CLAIMS", "true")
+	t.Setenv("OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST", "graph.microsoft.com,graph.windows.net")
 
-	var gotGroups []string
-	var gotEndpoint string
-	cmd := newRootCommand(captureEntraIDGroupsRunner(&gotGroups, &gotEndpoint))
+	var gotEnabled bool
+	var gotAllowlist []string
+	cmd := newRootCommand(captureDistributedClaimsRunner(&gotEnabled, &gotAllowlist))
 	cmd.SetArgs([]string{"http://backend"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("expected command to succeed, got error: %v", err)
 	}
 
-	wantGroups := []string{"env-group-1", "env-group-2"}
-	if !reflect.DeepEqual(gotGroups, wantGroups) {
-		t.Fatalf("expected env groups %v, got %v", wantGroups, gotGroups)
+	if !gotEnabled {
+		t.Fatalf("expected env to enable resolver")
 	}
-	// Default endpoint applies when env and flag are unset.
-	if gotEndpoint != "https://graph.microsoft.com" {
-		t.Fatalf("expected default graph endpoint, got %q", gotEndpoint)
+	wantAllowlist := []string{"graph.microsoft.com", "graph.windows.net"}
+	if !reflect.DeepEqual(gotAllowlist, wantAllowlist) {
+		t.Fatalf("expected env allowlist %v, got %v", wantAllowlist, gotAllowlist)
 	}
 }
