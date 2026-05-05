@@ -2,16 +2,17 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gobwas/glob"
 	"github.com/mattn/go-jsonpointer"
-	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 )
 
@@ -24,14 +25,14 @@ type oidcProvider struct {
 	allowedUsersGlob      []glob.Glob
 	allowedAttributes     map[string][]string
 	allowedAttributesGlob map[string][]glob.Glob
-	entraIDResolver       *entraIDGroupResolver
+	distributedClaims     *distributedClaimsResolver
 }
 
 func NewOIDCProvider(
 	configurationURL string, scopes []string, userIDField string,
 	providerName, externalURL, clientID, clientSecret string, allowedUsers []string, allowedUsersGlob []string,
 	allowedAttributes map[string][]string, allowedAttributesGlob map[string][]string,
-	entraIDConfig *EntraIDGroupResolverConfig,
+	distributedClaimsConfig *DistributedClaimsResolverConfig,
 ) (Provider, error) {
 	resp, err := http.Get(configurationURL)
 	if err != nil {
@@ -77,7 +78,7 @@ func NewOIDCProvider(
 		}
 	}
 
-	resolver, err := NewEntraIDGroupResolver(entraIDConfig)
+	resolver, err := NewDistributedClaimsResolver(distributedClaimsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +101,7 @@ func NewOIDCProvider(
 		allowedUsersGlob:      compiledGlobs,
 		allowedAttributes:     allowedAttributes,
 		allowedAttributesGlob: compiledAttributeGlobs,
-		entraIDResolver:       resolver,
+		distributedClaims:     resolver,
 	}, nil
 }
 
@@ -161,10 +162,25 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 		return false, "", nil, errors.New("user ID field is not a string")
 	}
 
+	// Distributed claims (OIDC Core 1.0 §5.6.2) often appear in the ID
+	// token rather than userinfo (notably for Entra ID's group-overage
+	// case), so merge ID-token claims into userInfoMap before running the
+	// distributed-claims resolver and the attribute filters. Userinfo wins
+	// on conflict — it's the authoritative profile endpoint.
+	if p.distributedClaims != nil {
+		if idTokenClaims := decodeIDTokenClaims(token); idTokenClaims != nil {
+			for k, v := range idTokenClaims {
+				if _, exists := userInfoMap[k]; !exists {
+					userInfoMap[k] = v
+				}
+			}
+		}
+		p.distributedClaims.Resolve(ctx, userInfoMap, token)
+	}
+
 	// If no restrictions are set, allow all users
 	if len(p.allowedUsers) == 0 && len(p.allowedUsersGlob) == 0 &&
-		len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 &&
-		p.entraIDResolver == nil {
+		len(p.allowedAttributes) == 0 && len(p.allowedAttributesGlob) == 0 {
 		return true, userID, userInfoMap, nil
 	}
 
@@ -182,7 +198,7 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 
 	// Check exact attribute matches
 	for key, allowedValues := range p.allowedAttributes {
-		attrValue, err := jsonpointer.Get(obj, key)
+		attrValue, err := jsonpointer.Get(userInfoMap, key)
 		if err != nil {
 			continue // Attribute not found, skip
 		}
@@ -193,7 +209,7 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 
 	// Check attribute glob patterns
 	for key, globs := range p.allowedAttributesGlob {
-		attrValue, err := jsonpointer.Get(obj, key)
+		attrValue, err := jsonpointer.Get(userInfoMap, key)
 		if err != nil {
 			continue // Attribute not found, skip
 		}
@@ -202,22 +218,37 @@ func (p *oidcProvider) Authorization(ctx context.Context, token *oauth2.Token) (
 		}
 	}
 
-	// Entra ID group membership check (Microsoft Graph API). The resolver
-	// uses the signed-in user's delegated access token, so the app
-	// registration only needs the User.Read scope the user already
-	// consented to — no admin-granted application permission required.
-	if p.entraIDResolver != nil {
-		allowed, err := p.entraIDResolver.Check(ctx, token)
-		if err != nil {
-			p.entraIDResolver.logger.Error("Entra ID group check failed", zap.Error(err))
-			return false, userID, userInfoMap, nil // fail closed
-		}
-		if allowed {
-			return true, userID, userInfoMap, nil
-		}
-	}
-
 	return false, userID, userInfoMap, nil
+}
+
+// decodeIDTokenClaims extracts the payload of the ID token if one is
+// present in the OAuth2 token's extras. The signature is not verified — the
+// token came back over a TLS-protected channel from the configured OIDC
+// provider, and this code only reads claims; it doesn't trust them for
+// authentication on its own. Returns nil if the ID token is absent or
+// malformed; callers must treat that as "no extra claims available".
+func decodeIDTokenClaims(token *oauth2.Token) map[string]any {
+	if token == nil {
+		return nil
+	}
+	rawAny := token.Extra("id_token")
+	raw, ok := rawAny.(string)
+	if !ok || raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil
+	}
+	return claims
 }
 
 // matchAttributeValue checks if an attribute value matches any of the allowed values.

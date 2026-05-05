@@ -461,11 +461,75 @@ func TestOIDCProviderAttributeMatching(t *testing.T) {
 	}
 }
 
-func TestOIDCProviderAuthorization_EntraIDResolverNilWhenDisabled(t *testing.T) {
-	// When no Entra ID config is supplied, the resolver must be nil so the
-	// Graph branch in Authorization is skipped entirely. A non-nil
-	// resolver here would mean we'd try to call Microsoft Graph for every
-	// non-Entra OIDC IdP that ever lands in this provider.
+func TestOIDCProviderAuthorization_DistributedClaimsResolved(t *testing.T) {
+	// End-to-end: userinfo carries _claim_names/_claim_sources for "groups",
+	// the resolver dereferences them, and an attribute filter matches the
+	// resolved value. This is the EntraID-style flow without any
+	// vendor-specific code paths.
+	groupsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":["allowed-group"]}`))
+	}))
+	defer groupsServer.Close()
+
+	configServer := gin.New()
+	configServer.GET("/.well-known/openid_configuration", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"authorization_endpoint": "http://localhost:8080/auth",
+			"token_endpoint":         "http://localhost:8080/token",
+			"userinfo_endpoint":      "http://localhost:8080/userinfo",
+		})
+	})
+	tsConfig := httptest.NewServer(configServer)
+	defer tsConfig.Close()
+
+	p, err := NewOIDCProvider(
+		tsConfig.URL+"/.well-known/openid_configuration",
+		[]string{"openid", "profile"},
+		"/sub",
+		TestOIDCProviderName,
+		TestOIDCExternalURL,
+		TestOIDCClientID,
+		TestOIDCClientSecret,
+		[]string{}, []string{},
+		map[string][]string{"/groups": {"allowed-group"}},
+		nil,
+		&DistributedClaimsResolverConfig{Enabled: true},
+	)
+	require.NoError(t, err)
+
+	userinfo := gin.New()
+	userinfo.GET("/userinfo", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"sub": "u1",
+			"_claim_names": gin.H{
+				"groups": "src1",
+			},
+			"_claim_sources": gin.H{
+				"src1": gin.H{"endpoint": groupsServer.URL},
+			},
+		})
+	})
+	tsUserinfo := httptest.NewServer(userinfo)
+	defer tsUserinfo.Close()
+
+	op := p.(*oidcProvider)
+	op.userInfoURL = tsUserinfo.URL + "/userinfo"
+
+	allowed, _, info, err := p.Authorization(context.Background(), &oauth2.Token{AccessToken: "t"})
+	require.NoError(t, err)
+	require.True(t, allowed)
+	require.Equal(t, []any{"allowed-group"}, info["groups"])
+	require.NotContains(t, info, "_claim_names")
+	require.NotContains(t, info, "_claim_sources")
+}
+
+func TestOIDCProviderAuthorization_DistributedClaimsResolverNilWhenDisabled(t *testing.T) {
+	// When no DistributedClaimsResolverConfig is supplied (or it's
+	// disabled), the resolver must be nil so Authorization skips the
+	// distributed-claims branch entirely. A non-nil resolver here would
+	// mean we'd attempt to dereference _claim_sources for every OIDC IdP
+	// regardless of whether the admin opted in.
 	p, _, userinfo, tsConfig := setupOIDCTest([]string{"other@example.com"}, "/email")
 	defer tsConfig.Close()
 
@@ -474,7 +538,7 @@ func TestOIDCProviderAuthorization_EntraIDResolverNilWhenDisabled(t *testing.T) 
 	})
 
 	op := p.(*oidcProvider)
-	require.Nil(t, op.entraIDResolver)
+	require.Nil(t, op.distributedClaims)
 
 	allowed, _, _, err := p.Authorization(context.Background(), &oauth2.Token{AccessToken: "t"})
 	require.NoError(t, err)

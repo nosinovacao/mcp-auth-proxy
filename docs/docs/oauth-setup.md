@@ -195,23 +195,24 @@ For group-based authorization with Okta:
 --oidc-configuration-url "https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration"
 ```
 
-##### Group Membership via Microsoft Graph API
+##### Group Membership via OIDC Distributed Claims
 
-Entra ID often does not emit group claims in the ID token or userinfo response,
-so `--oidc-allowed-attributes` against `/groups` will not work out of the box.
-Instead, use `--entraid-allowed-groups` to have the proxy resolve group
-membership via the Microsoft Graph
-[`getMemberObjects`](https://learn.microsoft.com/en-us/graph/api/directoryobject-getmemberobjects)
-endpoint on `/me`, using the signed-in user's access token. This matches the
-approach Grafana takes when `force_use_graph_api` is enabled and only requires
-the delegated `User.Read` permission the user already consents to at sign-in —
-no `GroupMember.Read.All` / `Directory.Read.All` application permission and no
-admin consent.
+When a user belongs to more than ~200 groups, Entra ID does not embed the
+group list in the ID token or userinfo response. Instead, it emits a
+[distributed claim](https://openid.net/specs/openid-connect-core-1_0.html#AggregatedDistributedClaims)
+pointing at a Microsoft Graph endpoint that holds the actual values. The
+proxy can dereference that endpoint with the signed-in user's access token
+and merge the resolved values back into the user's claim set, so the
+existing `--oidc-allowed-attributes /groups=...` filter matches as it would
+for any other IdP. This requires only the delegated `User.Read` permission
+the user already consents to at sign-in — no `GroupMember.Read.All` /
+`Directory.Read.All` application permission and no admin consent.
 
-1. **Collect the group object IDs** you want to allow (Entra ID → Groups → copy
-   each group's Object ID — these are GUIDs).
+1. **Collect the group object IDs** you want to allow (Entra ID → Groups →
+   copy each group's Object ID — these are GUIDs).
 
-2. **Run the proxy** with `--entraid-allowed-groups`:
+2. **Run the proxy** with distributed-claims resolution enabled and the
+   relevant Graph hosts allowlisted:
 
    ```bash
    ./mcp-auth-proxy \
@@ -220,27 +221,33 @@ admin consent.
      --oidc-configuration-url "https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration" \
      --oidc-client-id "$CLIENT_ID" \
      --oidc-client-secret "$CLIENT_SECRET" \
-     --entraid-allowed-groups "group-id-1,group-id-2" \
+     --oidc-resolve-distributed-claims \
+     --oidc-distributed-claims-endpoint-allowlist "graph.microsoft.com,graph.windows.net" \
+     --oidc-allowed-attributes "/groups=group-id-1,/groups=group-id-2" \
      -- your-mcp-command
    ```
 
-   For sovereign clouds (e.g., US Government), override the Graph endpoint:
-
-   ```bash
-   --entraid-graph-api-endpoint "https://graph.microsoft.us"
-   ```
+   For sovereign clouds (e.g., US Government), allowlist the corresponding
+   Graph host instead — for example `graph.microsoft.us`.
 
 Notes:
 
-- `--entraid-allowed-groups` is combined with `--oidc-allowed-users`,
-  `--oidc-allowed-users-glob`, `--oidc-allowed-attributes`, and
-  `--oidc-allowed-attributes-glob` via OR.
-- The same `--oidc-client-id`/`--oidc-client-secret` are reused for the Graph
-  API call — no separate credentials are needed.
-- If the Graph lookup is reached and the Graph API is unreachable or returns an
-  error, the check denies access (fail closed).
+- `--oidc-resolve-distributed-claims` is opt-in and off by default. When it
+  is disabled, distributed claims are left as opaque references and any
+  attribute filter targeting them will not match.
+- The endpoint allowlist has no default value; you must enumerate the
+  Graph hosts your tenant emits. Both `graph.microsoft.com` (current app
+  registrations) and `graph.windows.net` (legacy) appear in real-world
+  Entra tokens.
+- The same `--oidc-client-id`/`--oidc-client-secret` are reused — no
+  separate credentials are needed.
+- JWT signatures on resolved-claim responses are not verified. Trust is
+  based on TLS to the endpoint plus the host allowlist.
+- If the distributed-claims endpoint is unreachable, the affected claim is
+  simply absent and any filter that depended on it will not match (fail
+  closed). Users already authorized by another filter are unaffected.
 
-See the [Configuration Reference](./configuration.md#microsoft-entra-id-graph-api-group-membership)
+See the [Configuration Reference](./configuration.md#oidc-distributed-claims)
 for the full flag reference.
 
 ## Multiple Providers
@@ -285,10 +292,10 @@ export OIDC_ALLOWED_USERS_GLOB="*@example.com"
 export OIDC_ALLOWED_ATTRIBUTES="/groups=admin,/department=engineering"
 export OIDC_ALLOWED_ATTRIBUTES_GLOB="/groups=*-admins"
 
-# Microsoft Entra ID group membership (Graph API)
-export ENTRAID_ALLOWED_GROUPS="group-id-1,group-id-2"
-# Override only for sovereign clouds, otherwise omit:
-# export ENTRAID_GRAPH_API_ENDPOINT="https://graph.microsoft.us"
+# OIDC distributed-claims resolution (e.g., for Entra ID group overage).
+# Match resolved groups via OIDC_ALLOWED_ATTRIBUTES above (e.g., /groups=group-id).
+export OIDC_RESOLVE_DISTRIBUTED_CLAIMS="true"
+export OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST="graph.microsoft.com,graph.windows.net"
 
 ./mcp-auth-proxy --external-url https://{your-domain} --tls-accept-tos -- your-mcp-command
 ```
