@@ -429,6 +429,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -497,6 +499,8 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -561,6 +565,8 @@ func TestNewRootCommand_ForwardAuthorizationFlag(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -625,6 +631,8 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 		oidcAllowedUsersGlob []string,
 		oidcAllowedAttributes map[string][]string,
 		oidcAllowedAttributesGlob map[string][]string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
 		noProviderAutoSelect bool,
 		password string,
 		passwordHash string,
@@ -650,5 +658,108 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 
 	if !forwardAuthorization {
 		t.Fatalf("expected forwardAuthorizationHeader to default to true from env var")
+	}
+}
+
+func captureDistributedClaimsRunner(outEnabled *bool, outAllowlist *[]string) proxyRunnerFunc {
+	return proxyRunnerFunc(func(listen string,
+		tlsListen string,
+		autoTLS bool,
+		tlsHost string,
+		tlsDirectoryURL string,
+		tlsAcceptTOS bool,
+		tlsCertFile string,
+		tlsKeyFile string,
+		dataPath string,
+		repositoryBackend string,
+		repositoryDSN string,
+		externalURL string,
+		googleClientID string,
+		googleClientSecret string,
+		googleAllowedUsers []string,
+		googleAllowedWorkspaces []string,
+		githubURL string,
+		githubAPIURL string,
+		githubClientID string,
+		githubClientSecret string,
+		githubAllowedUsers []string,
+		githubAllowedOrgs []string,
+		oidcConfigurationURL string,
+		oidcClientID string,
+		oidcClientSecret string,
+		oidcScopes []string,
+		oidcUserIDField string,
+		oidcProviderName string,
+		oidcAllowedUsers []string,
+		oidcAllowedUsersGlob []string,
+		oidcAllowedAttributes map[string][]string,
+		oidcAllowedAttributesGlob map[string][]string,
+		oidcResolveDistributedClaims bool,
+		oidcDistributedClaimsEndpointAllowlist []string,
+		noProviderAutoSelect bool,
+		password string,
+		passwordHash string,
+		trustedProxy []string,
+		proxyHeaders []string,
+		proxyBearerToken string,
+		forwardAuthorizationHeader bool,
+		proxyTarget []string,
+		httpStreamingOnly bool,
+		headerMapping map[string]string,
+		headerMappingBase string,
+	) error {
+		*outEnabled = oidcResolveDistributedClaims
+		*outAllowlist = oidcDistributedClaimsEndpointAllowlist
+		return nil
+	})
+}
+
+func TestNewRootCommand_DistributedClaimsFlags(t *testing.T) {
+	t.Setenv("OIDC_RESOLVE_DISTRIBUTED_CLAIMS", "")
+	t.Setenv("OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST", "")
+
+	var gotEnabled bool
+	var gotAllowlist []string
+	cmd := newRootCommand(captureDistributedClaimsRunner(&gotEnabled, &gotAllowlist))
+	// Trailing comma + surrounding whitespace must be dropped from the
+	// allowlist so admins can copy/paste configurations without surprises.
+	cmd.SetArgs([]string{
+		"--oidc-resolve-distributed-claims",
+		"--oidc-distributed-claims-endpoint-allowlist", " graph.microsoft.com , ,graph.windows.net,",
+		"http://backend",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	if !gotEnabled {
+		t.Fatalf("expected --oidc-resolve-distributed-claims to enable resolver")
+	}
+	wantAllowlist := []string{"graph.microsoft.com", "graph.windows.net"}
+	if !reflect.DeepEqual(gotAllowlist, wantAllowlist) {
+		t.Fatalf("expected allowlist %v, got %v", wantAllowlist, gotAllowlist)
+	}
+}
+
+func TestNewRootCommand_DistributedClaimsFromEnv(t *testing.T) {
+	t.Setenv("OIDC_RESOLVE_DISTRIBUTED_CLAIMS", "true")
+	t.Setenv("OIDC_DISTRIBUTED_CLAIMS_ENDPOINT_ALLOWLIST", "graph.microsoft.com,graph.windows.net")
+
+	var gotEnabled bool
+	var gotAllowlist []string
+	cmd := newRootCommand(captureDistributedClaimsRunner(&gotEnabled, &gotAllowlist))
+	cmd.SetArgs([]string{"http://backend"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	if !gotEnabled {
+		t.Fatalf("expected env to enable resolver")
+	}
+	wantAllowlist := []string{"graph.microsoft.com", "graph.windows.net"}
+	if !reflect.DeepEqual(gotAllowlist, wantAllowlist) {
+		t.Fatalf("expected env allowlist %v, got %v", wantAllowlist, gotAllowlist)
 	}
 }
